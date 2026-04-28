@@ -54,7 +54,7 @@ function nextMessageId(sessionId: number) {
 function selectSession(id: number) {
   activeSessionId.value = id
 }
-// 新建会话,
+// 新建会话
 function createSession() {
   const id = Date.now()
   // unshift 方法在数组开头添加一个或多个元素，并返回新的数组长度
@@ -75,9 +75,11 @@ function sendMessage(text: string) {
     content: text,
     time: getNow(),
   }
+  // 把用户消息添加到当前会话的消息列表中，再把新的userMsg放到最后面
   messagesBySession.value[sid] = [...(messagesBySession.value[sid] ?? []), userMsg]
   const currentSession = sessions.value.find((s) => s.id === sid)
   if (currentSession && currentSession.title === '新会话') {
+    // 截取用户消息的前12个字符，作为会话标题，如果用户消息为空，就用默认标题 '新会话' 代替
     currentSession.title = text.slice(0, 12) || '新会话'
   }
   loading.value = true
