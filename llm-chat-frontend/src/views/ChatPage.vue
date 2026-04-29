@@ -15,7 +15,9 @@ const sessions = ref<SessionItem[]>([
 // activeSessionId 是当前选中的会话 ID
 const activeSessionId = ref<number>(1)
 
-// ？？？
+// messagesBySession为什么设计成Record<number, MessageItem[]>，而不是只用一个数组？
+// 因为要按“会话 id -> 消息列表”来存数据，
+// Record<number, MessageItem[]> 很适合表示这种一对一映射关系。TypeScript 只是顺便帮你做了类型约束。
 const messagesBySession = ref<Record<number, MessageItem[]>>({
   1: [{ id: 1, role: 'assistant', content: '你好，我是天才程序员(gpt大人)^_^。', time: getNow() }],
   2: [{ id: 1, role: 'user', content: '我是你爹。', time: getNow() }],
@@ -63,6 +65,43 @@ function createSession() {
   // 切换到新会话
   activeSessionId.value = id
 }
+
+function renameSession(id: number, title: string) {
+  const target = sessions.value.find((session) => session.id === id)
+  if (!target)
+    return
+
+  target.title = title
+}
+
+// 删除会话
+function delSession(id: number) {
+  // 1.先判断当前删除的是否是当前选中的会话
+  const isActive = activeSessionId.value === id
+  // 2.从sessions里删掉这个会话
+  // filter 方法返回一个新的数组，包含所有符合条件的元素，即里面为true的元素
+  // 不改变原数组。符合条件的元素是：id !==等于删除的会话id
+  sessions.value = sessions.value.filter((s) => s.id !== id)
+  // 3.从messagesBySession里删掉对应的消息
+  // delete 用于删除对象的属性
+  delete messagesBySession.value[id]
+  // 4.如果删的不是当前会话，后面就不用处理了
+  if (!isActive) return
+  // 5.如果删完之后还有剩余会话
+  if (sessions.value.length > 0) {
+    // 切换到剩余列表中的第一个会话
+    // TS语法：?.是可选链操作符，用于安全地访问对象的属性，
+    // 对象存在时，返回属性值；如果对象不存在，就返回 undefined
+    // ?? 是空合并操作符，如果??前面是null或undefined，就返回右侧的值
+    // 如果 sessions.value[0] 存在，就返回它的 id；否则返回 1
+    activeSessionId.value = sessions.value[0]?.id ?? 1
+    return
+  }
+  // 6. 如果删完一个会话都没有了
+  // 自动新建一个空会话
+  createSession()
+}
+
 // 发送消息
 function sendMessage(text: string) {
   if (loading.value) return
@@ -107,6 +146,8 @@ function clearSession() {
         :active-session-id="activeSessionId"
         @select-session="selectSession"
         @create-session="createSession"
+        @rename-session="renameSession"
+        @del-session="delSession"
       />
     </template>
     <template #header>
@@ -121,7 +162,7 @@ function clearSession() {
       <MessageList :messages="currentMessages" :loading="loading" />
     </template>
     <template #footer>
-      <MessageInput @send-message="sendMessage" />
+      <MessageInput @send-message="sendMessage" :loading="loading" />
     </template>
   </ChatLayout>
 </template>

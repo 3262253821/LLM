@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+interface Props {
+  loading: boolean
+}
+const props = defineProps<Props>()
 const emit = defineEmits<{
   (e: 'send-message', text: string): void
 }>()
@@ -27,8 +31,11 @@ function onKeydown(e: KeyboardEvent) {
       class="message-input__textarea"
       placeholder="请输入消息,Enter 发送,Shift+Enter 换行"
       @keydown="onKeydown"
+      :disabled="props.loading"
     />
-    <button class="message-input__send-btn" :disabled="!canSend" @click="send">发送</button>
+    <button class="message-input__send-btn" :disabled="props.loading || !canSend" @click="send">
+      {{ props.loading ? 'AI思考中' : '发送' }}
+    </button>
   </div>
 </template>
 <style scoped>
