@@ -9,3 +9,9 @@ export interface MessageItem {
   content: string
   time: string
 }
+export type MessagesBySession = Record<number, MessageItem[]>
+export interface ChatPersistedState {
+  sessions: SessionItem[]
+  activeSessionId: number
+  messagesBySession: MessagesBySession
+}

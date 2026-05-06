@@ -1,142 +1,23 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import ChatLayout from '@/components/chat/ChatLayout.vue'
 import SessionList from '@/components/chat/SessionList.vue'
 import ChatHeader from '@/components/chat/ChatHeader.vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import MessageInput from '@/components/chat/MessageInput.vue'
-import type { MessageItem, SessionItem } from '@/types/chat'
+import { useChatStore } from '@/stores/chat'
 
-// SessionItem[]是会话对象数组，数组每一项都要符合SessionItem
-const sessions = ref<SessionItem[]>([
-  { id: 1, title: '默认会话' },
-  { id: 2, title: 'Vue 组件通信' },
-])
-// activeSessionId 是当前选中的会话 ID
-const activeSessionId = ref<number>(1)
-
-// messagesBySession为什么设计成Record<number, MessageItem[]>，而不是只用一个数组？
-// 因为要按“会话 id -> 消息列表”来存数据，
-// Record<number, MessageItem[]> 很适合表示这种一对一映射关系。TypeScript 只是顺便帮你做了类型约束。
-const messagesBySession = ref<Record<number, MessageItem[]>>({
-  1: [{ id: 1, role: 'assistant', content: '你好，我是天才程序员(gpt大人)^_^。', time: getNow() }],
-  2: [{ id: 1, role: 'user', content: '我是你爹。', time: getNow() }],
-})
-// loading 是发送消息时的是否是加载状态
-const loading = ref(false)
-
-// activeTitle 是当前选中的会话标题
-const activeTitle = computed(() => {
-  // 从 sessions 中查找 activeSessionId 对应的会话
-  const target = sessions.value.find((s) => s.id === activeSessionId.value)
-  // 如果找到会话，返回会话标题；否则返回 '未命名会话'
-  return target?.title ?? '未命名会话'
-})
-// currentMessages 是当前选中的会话消息列表
-const currentMessages = computed(() => {
-  return messagesBySession.value[activeSessionId.value] ?? []
-})
-// 获取当前时间，格式为 HH:mm:ss
-function getNow() {
-  return new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-}
-// nextMessageId 是下一个消息 ID
-function nextMessageId(sessionId: number) {
-  const list = messagesBySession.value[sessionId] ?? []
-  // 取数组最后一项，如果这个会话已经有消息，last就是最后一条消息，否则last就是 undefined
-  const last = list.at(-1) // 可能是 MessageItem | undefined
-  // 如果最后一条消息存在，新消息id=last.id+1；否则新消息id=1
-  return last ? last.id + 1 : 1
-}
-// 切换会话 id是从子组件SessionList里面emit过来的
-function selectSession(id: number) {
-  activeSessionId.value = id
-}
-// 新建会话
-function createSession() {
-  const id = Date.now()
-  // unshift 方法在数组开头添加一个或多个元素，并返回新的数组长度
-  sessions.value.unshift({ id, title: '新会话' })
-  messagesBySession.value[id] = []
-  // 切换到新会话
-  activeSessionId.value = id
-}
-
-function renameSession(id: number, title: string) {
-  const target = sessions.value.find((session) => session.id === id)
-  if (!target)
-    return
-
-  target.title = title
-}
-
-// 删除会话
-function delSession(id: number) {
-  // 1.先判断当前删除的是否是当前选中的会话
-  const isActive = activeSessionId.value === id
-  // 2.从sessions里删掉这个会话
-  // filter 方法返回一个新的数组，包含所有符合条件的元素，即里面为true的元素
-  // 不改变原数组。符合条件的元素是：id !==等于删除的会话id
-  sessions.value = sessions.value.filter((s) => s.id !== id)
-  // 3.从messagesBySession里删掉对应的消息
-  // delete 用于删除对象的属性
-  delete messagesBySession.value[id]
-  // 4.如果删的不是当前会话，后面就不用处理了
-  if (!isActive) return
-  // 5.如果删完之后还有剩余会话
-  if (sessions.value.length > 0) {
-    // 切换到剩余列表中的第一个会话
-    // TS语法：?.是可选链操作符，用于安全地访问对象的属性，
-    // 对象存在时，返回属性值；如果对象不存在，就返回 undefined
-    // ?? 是空合并操作符，如果??前面是null或undefined，就返回右侧的值
-    // 如果 sessions.value[0] 存在，就返回它的 id；否则返回 1
-    activeSessionId.value = sessions.value[0]?.id ?? 1
-    return
-  }
-  // 6. 如果删完一个会话都没有了
-  // 自动新建一个空会话
-  createSession()
-}
-
-// 发送消息
-function sendMessage(text: string) {
-  if (loading.value) return
-  // sid指当前选中的会话ID
-  const sid = activeSessionId.value
-  // 构造一条用户消息对象
-  const userMsg: MessageItem = {
-    id: nextMessageId(sid),
-    role: 'user',
-    content: text,
-    time: getNow(),
-  }
-  // 把用户消息添加到当前会话的消息列表中，再把新的userMsg放到最后面
-  messagesBySession.value[sid] = [...(messagesBySession.value[sid] ?? []), userMsg]
-  const currentSession = sessions.value.find((s) => s.id === sid)
-  if (currentSession && currentSession.title === '新会话') {
-    // 截取用户消息的前12个字符，作为会话标题，如果用户消息为空，就用默认标题 '新会话' 代替
-    currentSession.title = text.slice(0, 12) || '新会话'
-  }
-  loading.value = true
-  setTimeout(() => {
-    const aiMsg: MessageItem = {
-      id: nextMessageId(sid),
-      role: 'assistant',
-      content: `我收到了你的消息：“${text}”。下一步我们可以接真实 API。`,
-      time: getNow(),
-    }
-    messagesBySession.value[sid] = [...(messagesBySession.value[sid] ?? []), aiMsg]
-    loading.value = false
-  }, 700)
-}
-// 清空会话
-function clearSession() {
-  messagesBySession.value[activeSessionId.value] = []
-}
+const chatStore = useChatStore()
+chatStore.init()
+const { sessions, activeSessionId, activeTitle, currentMessages, loading } = storeToRefs(chatStore)
+const {
+  selectSession,
+  createSession,
+  renameSession,
+  deleteSession,
+  sendMessage,
+  clearCurrentSession,
+} = chatStore
 </script>
 <template>
   <ChatLayout>
@@ -147,7 +28,7 @@ function clearSession() {
         @select-session="selectSession"
         @create-session="createSession"
         @rename-session="renameSession"
-        @del-session="delSession"
+        @del-session="deleteSession"
       />
     </template>
     <template #header>
@@ -155,14 +36,14 @@ function clearSession() {
         :title="activeTitle"
         :message-count="currentMessages.length"
         :loading="loading"
-        @clear-session="clearSession"
+        @clear-session="clearCurrentSession"
       />
     </template>
     <template #content>
       <MessageList :messages="currentMessages" :loading="loading" />
     </template>
     <template #footer>
-      <MessageInput @send-message="sendMessage" :loading="loading" />
+      <MessageInput :loading="loading" @send-message="sendMessage" />
     </template>
   </ChatLayout>
 </template>
