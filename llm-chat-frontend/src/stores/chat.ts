@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { sendChatMessage } from '@/services/chatApi'
 import { loadChatState, saveChatState } from '@/utils/chatStorage'
 import type { ChatPersistedState, MessageItem, MessagesBySession, SessionItem } from '@/types/chat'
 
@@ -208,47 +209,54 @@ export const useChatStore = defineStore('chat', () => {
   }
   // sendMessage：发送消息
   // 这个函数的作用是发送一条消息。
-  function sendMessage(text: string) {
+  async function sendMessage(text: string) {
     const value = text.trim()
-    // 如果消息为空，或者正在加载中，就直接返回
     if (!value || loading.value) return
     const sessionId = activeSessionId.value
-    // 先构造用户消息对象
     const userMessage: MessageItem = {
       id: nextMessageId(sessionId),
       role: 'user',
       content: value,
       time: getNow(),
     }
-    // 把userMessage插入到消息数组的最后
     messagesBySession.value[sessionId] = [
       ...(messagesBySession.value[sessionId] ?? []),
       userMessage,
     ]
     const currentSession = sessions.value.find((item) => item.id === sessionId)
-    // 如果是当前会话或者会话标题叫新会话
     if (currentSession && currentSession.title === '新会话') {
-      // slice函数，字符串.slice(start, end) 从 start 开始，不包含 end，返回一个新的字符串
-      // 自动拿用户发送内容的前12个字符作标题
       currentSession.title = value.slice(0, 12) || '新会话'
     }
     loading.value = true
     persist()
-    // 使用定时器模拟 API 响应延迟
-    window.setTimeout(() => {
+    try {
+      const sessionMessages = messagesBySession.value[sessionId] ?? []
+      const replyText = await sendChatMessage(sessionMessages)
       const assistantMessage: MessageItem = {
         id: nextMessageId(sessionId),
         role: 'assistant',
-        content: `我收到了你的消息：“${value}”。下一步我们可以接真实 API。`,
+        content: replyText,
         time: getNow(),
       }
       messagesBySession.value[sessionId] = [
         ...(messagesBySession.value[sessionId] ?? []),
         assistantMessage,
       ]
+    } catch (error) {
+      const errorMessage: MessageItem = {
+        id: nextMessageId(sessionId),
+        role: 'assistant',
+        content: error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误',
+        time: getNow(),
+      }
+      messagesBySession.value[sessionId] = [
+        ...(messagesBySession.value[sessionId] ?? []),
+        errorMessage,
+      ]
+    } finally {
       loading.value = false
       persist()
-    }, 700)
+    }
   }
   // clearCurrentSession：清空当前会话
   // 这个函数的作用是清空当前选中的会话的所有消息。
