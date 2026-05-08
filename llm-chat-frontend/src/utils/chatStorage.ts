@@ -1,6 +1,7 @@
 import type { ChatPersistedState } from '@/types/chat'
 
 const CHAT_STORAGE_KEY = 'llm-chat-frontend:chat-state'
+// loadChatState() 从 localStorage 中读取聊天状态
 export function loadChatState(): ChatPersistedState | null {
   const raw = localStorage.getItem(CHAT_STORAGE_KEY)
   if (!raw) return null
@@ -12,6 +13,7 @@ export function loadChatState(): ChatPersistedState | null {
     return null
   }
 }
+// saveChatState() 把拿出来的数据存到本地
 export function saveChatState(state: ChatPersistedState) {
   localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(state))
 }
