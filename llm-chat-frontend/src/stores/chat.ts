@@ -183,8 +183,12 @@ export const useChatStore = defineStore('chat', () => {
   function deleteSession(id: number) {
     // 判断删除的会话是否是当前选中的会话
     const isActive = activeSessionId.value === id
+    // filter函数是返回一个新的数组，只包含符合条件的元素
     sessions.value = sessions.value.filter((item) => item.id !== id)
+    // 同时删掉对应的消息数组
     delete messagesBySession.value[id]
+    // 如果删的不是当前选中的会话，也要继续处理。因为虽然没删除当前会话，但还是删掉了两块状态
+    // 所以说状态发生了变化，就要修正状态并且更新状态到本地
     if (!isActive) {
       ensureUsableState()
       persist()
@@ -202,26 +206,35 @@ export const useChatStore = defineStore('chat', () => {
     applyState(createEmptySessionState())
     persist()
   }
+  // sendMessage：发送消息
+  // 这个函数的作用是发送一条消息。
   function sendMessage(text: string) {
     const value = text.trim()
+    // 如果消息为空，或者正在加载中，就直接返回
     if (!value || loading.value) return
     const sessionId = activeSessionId.value
+    // 先构造用户消息对象
     const userMessage: MessageItem = {
       id: nextMessageId(sessionId),
       role: 'user',
       content: value,
       time: getNow(),
     }
+    // 把userMessage插入到消息数组的最后
     messagesBySession.value[sessionId] = [
       ...(messagesBySession.value[sessionId] ?? []),
       userMessage,
     ]
     const currentSession = sessions.value.find((item) => item.id === sessionId)
+    // 如果是当前会话或者会话标题叫新会话
     if (currentSession && currentSession.title === '新会话') {
+      // slice函数，字符串.slice(start, end) 从 start 开始，不包含 end，返回一个新的字符串
+      // 自动拿用户发送内容的前12个字符作标题
       currentSession.title = value.slice(0, 12) || '新会话'
     }
     loading.value = true
     persist()
+    // 使用定时器模拟 API 响应延迟
     window.setTimeout(() => {
       const assistantMessage: MessageItem = {
         id: nextMessageId(sessionId),
@@ -237,10 +250,13 @@ export const useChatStore = defineStore('chat', () => {
       persist()
     }, 700)
   }
+  // clearCurrentSession：清空当前会话
+  // 这个函数的作用是清空当前选中的会话的所有消息。
   function clearCurrentSession() {
     messagesBySession.value[activeSessionId.value] = []
     persist()
   }
+  // return：暴露给页面使用
   return {
     sessions,
     activeSessionId,
