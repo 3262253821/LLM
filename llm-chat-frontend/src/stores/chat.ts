@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { sendChatMessage } from '@/services/chatApi'
+import { sendChatMessageStream } from '@/services/chatApi'
 import { loadChatState, saveChatState } from '@/utils/chatStorage'
 import type { ChatPersistedState, MessageItem, MessagesBySession, SessionItem } from '@/types/chat'
 
@@ -209,55 +209,94 @@ export const useChatStore = defineStore('chat', () => {
   }
   // sendMessage：发送消息
   // 这个函数的作用是发送一条消息。
+  // 异步函数，因为要等待服务器返回结果。
   async function sendMessage(text: string) {
     const value = text.trim()
     if (!value || loading.value) return
+
     const sessionId = activeSessionId.value
+
     const userMessage: MessageItem = {
       id: nextMessageId(sessionId),
       role: 'user',
       content: value,
       time: getNow(),
     }
+
     messagesBySession.value[sessionId] = [
       ...(messagesBySession.value[sessionId] ?? []),
       userMessage,
     ]
+
     const currentSession = sessions.value.find((item) => item.id === sessionId)
     if (currentSession && currentSession.title === '新会话') {
       currentSession.title = value.slice(0, 12) || '新会话'
     }
+
     loading.value = true
     persist()
+
     try {
       const sessionMessages = messagesBySession.value[sessionId] ?? []
-      const replyText = await sendChatMessage(sessionMessages)
+      // 手动创建一条'AI占位消息',整个过程中变化的只有content字段
       const assistantMessage: MessageItem = {
         id: nextMessageId(sessionId),
         role: 'assistant',
-        content: replyText,
+        content: '正在思考中...',
         time: getNow(),
       }
-      messagesBySession.value[sessionId] = [
-        ...(messagesBySession.value[sessionId] ?? []),
-        assistantMessage,
-      ]
+
+      messagesBySession.value[sessionId] = [...sessionMessages, assistantMessage]
+      // 把刚刚插进去的那条AI消息的位置记录下来
+      const assistantIndex = messagesBySession.value[sessionId].length - 1
+      // 流式输出的核心逻辑:
+      // 调用流式请求函数，把当前会话消息发给 DeepSeek，并且传进去一个回调函数。回调函数参数:chunkText
+      await sendChatMessageStream(sessionMessages, (chunkText) => {
+        // 拿到最新的消息数组
+        const currentList = messagesBySession.value[sessionId]
+        if (!currentList) return
+        // 根据刚才保存的 assistantIndex，把那条“正在思考中...”的 AI 消息取出来。
+        const currentAssistantMessage = currentList[assistantIndex]
+        if (!currentAssistantMessage) return
+
+        if (currentAssistantMessage.content === '正在思考中...') {
+          currentAssistantMessage.content = chunkText
+        } else {
+          currentAssistantMessage.content += chunkText
+        }
+      })
     } catch (error) {
-      const errorMessage: MessageItem = {
-        id: nextMessageId(sessionId),
-        role: 'assistant',
-        content: error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误',
-        time: getNow(),
+      // 错误类型是否是Error,是则提取错误信息,否则使用默认错误信息
+      const errorText =
+        error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误'
+
+      const currentList = messagesBySession.value[sessionId] ?? []
+      // 取出最后一条消息,即最新的AI消息
+      const lastMessage = currentList.at(-1)
+      // 只有当最后一条消息存在，并且它是 assistant，
+      // 并且它的内容是“正在思考中...”或者空字符串，才直接把这条消息改成错误提示。
+      if (
+        lastMessage &&
+        lastMessage.role === 'assistant' &&
+        (lastMessage.content === '正在思考中...' || lastMessage.content === '')
+      ) {
+        lastMessage.content = errorText
+      } else {
+        const errorMessage: MessageItem = {
+          id: nextMessageId(sessionId),
+          role: 'assistant',
+          content: errorText,
+          time: getNow(),
+        }
+
+        messagesBySession.value[sessionId] = [...currentList, errorMessage]
       }
-      messagesBySession.value[sessionId] = [
-        ...(messagesBySession.value[sessionId] ?? []),
-        errorMessage,
-      ]
     } finally {
       loading.value = false
       persist()
     }
   }
+
   // clearCurrentSession：清空当前会话
   // 这个函数的作用是清空当前选中的会话的所有消息。
   function clearCurrentSession() {

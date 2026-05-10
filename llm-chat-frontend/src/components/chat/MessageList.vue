@@ -8,18 +8,25 @@ interface Props {
 }
 const props = defineProps<Props>()
 const containerRef = ref<HTMLDivElement | null>(null)
+// 监听消息列表变化，并在页面更新完成后，自动把聊天区域滚动到底部。
 watch(
-  // 监听消息长度的变化，当消息长度变化时，滚动到最底部
-  () => props.messages.length,
+  // 监听的三个东西，分别是：
+  // 1. 消息列表的长度
+  // 2. 最后一条消息的内容
+  // 3. 加载状态
+  () => [props.messages.length, props.messages.at(-1)?.content, props.loading],
   async () => {
-    // 确保 DOM 更新完成后执行滚动操作，先等 Vue 把新消息渲染到页面上，再去计算高度并滚动。
+    // 先等 Vue 把 DOM 更新完，再去执行滚动。
     await nextTick()
-    // 如果容器存在，滚动到最底部
+    // 先判断聊天容器的dom是否存在
     if (containerRef.value) {
+      // scrollTop：当前滚动条滚动到的位置
+      // scrollHeight：整个可滚动内容的总高度
       containerRef.value.scrollTop = containerRef.value.scrollHeight
     }
   },
-  // 组件初始化时先执行一次，首次进入页面也会滚到底部
+  // 在 watch 刚创建时，先立即执行一次回调。
+  // 因为这样页面第一次进入时，即使还没发生数据变化，也会先自动滚动到底部一次。
   { immediate: true },
 )
 </script>
@@ -38,12 +45,6 @@ watch(
         <div class="message-role">{{ item.role === 'user' ? '你' : 'AI' }}</div>
         <div class="message-content">{{ item.content }}</div>
         <div class="message-time">{{ item.time }}</div>
-      </div>
-    </div>
-    <div v-if="props.loading" class="message-row">
-      <div class="message-bubble">
-        <div class="message-role">AI</div>
-        <div class="message-content">正在思考中...</div>
       </div>
     </div>
   </div>

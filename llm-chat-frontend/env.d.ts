@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 // 接口名字：ImportMetaEnv，专门表示import.meta.env里面的有哪些属性及其类型
 interface ImportMetaEnv {
   // readonly表示该属性是只读的，不能被修改。
