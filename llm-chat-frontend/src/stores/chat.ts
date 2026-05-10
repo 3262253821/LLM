@@ -60,6 +60,7 @@ export const useChatStore = defineStore('chat', () => {
   const messagesBySession = ref<MessagesBySession>({}) // 每个会话的消息列表，初始为空对象
   const loading = ref(false) // 是否正在加载中，初始为 false
   const inited = ref(false) // 是否初始化完成，初始为 false
+  const abortController = ref<AbortController | null>(null) // 当前这一次流式请求对应的终止控制器
   // computed部分，计算属性
   // 当前选中的会话标题
   const activeTitle = computed(() => {
@@ -152,6 +153,113 @@ export const useChatStore = defineStore('chat', () => {
     const last = list.at(-1)
     return last ? last.id + 1 : 1
   }
+
+  // 判断当前错误是不是“主动中断请求”产生的 AbortError
+  function isAbortError(error: unknown) {
+    return error instanceof DOMException && error.name === 'AbortError'
+  }
+
+  // 统一处理“AI 回复失败”时的消息显示
+  function handleReplyError(sessionId: number, error: unknown) {
+    // 错误类型是否是Error,是则提取错误信息,否则使用默认错误信息
+    const errorText =
+      error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误'
+
+    const currentList = messagesBySession.value[sessionId] ?? []
+    // 取出最后一条消息,即最新的AI消息
+    const lastMessage = currentList.at(-1)
+    // 只有当最后一条消息存在，并且它是 assistant，
+    // 并且它的内容是“正在思考中...”或者空字符串，才直接把这条消息改成错误提示。
+    if (
+      lastMessage &&
+      lastMessage.role === 'assistant' &&
+      (lastMessage.content === '正在思考中...' || lastMessage.content === '')
+    ) {
+      lastMessage.content = errorText
+    } else {
+      const errorMessage: MessageItem = {
+        id: nextMessageId(sessionId),
+        role: 'assistant',
+        content: errorText,
+        time: getNow(),
+      }
+
+      messagesBySession.value[sessionId] = [...currentList, errorMessage]
+    }
+  }
+
+  // 统一处理“停止生成”时的消息显示
+  function handleReplyAbort(sessionId: number) {
+    const currentList = messagesBySession.value[sessionId] ?? []
+    // 取出最后一条消息,即最新的AI消息
+    const lastMessage = currentList.at(-1)
+
+    // 如果一条真实内容都还没返回，就把“正在思考中...”改成“已停止生成”
+    if (
+      lastMessage &&
+      lastMessage.role === 'assistant' &&
+      lastMessage.content === '正在思考中...'
+    ) {
+      lastMessage.content = '已停止生成'
+    }
+    // 如果已经有部分流式内容了，这里什么都不做，保留已生成的内容
+  }
+
+  // 把“请求 AI 流式回复”这段逻辑单独提取出来，sendMessage 和 regenerateMessage 都复用它
+  async function streamAssistantReply(sessionId: number, sessionMessages: MessageItem[]) {
+    // 手动创建一条'AI占位消息',整个过程中变化的只有content字段
+    const assistantMessage: MessageItem = {
+      id: nextMessageId(sessionId),
+      role: 'assistant',
+      content: '正在思考中...',
+      time: getNow(),
+    }
+
+    messagesBySession.value[sessionId] = [...sessionMessages, assistantMessage]
+    // 把刚刚插进去的那条AI消息的位置记录下来
+    const assistantIndex = messagesBySession.value[sessionId].length - 1
+
+    // 为这一次请求单独创建一个 AbortController
+    const controller = new AbortController()
+    abortController.value = controller
+
+    try {
+      // 流式输出的核心逻辑:
+      // 调用流式请求函数，把当前会话消息发给 DeepSeek，并且传进去一个回调函数。回调函数参数:chunkText
+      await sendChatMessageStream(
+        sessionMessages,
+        (chunkText) => {
+          // 拿到最新的消息数组
+          const currentList = messagesBySession.value[sessionId]
+          if (!currentList) return
+          // 根据刚才保存的 assistantIndex，把那条“正在思考中...”的 AI 消息取出来。
+          const currentAssistantMessage = currentList[assistantIndex]
+          if (!currentAssistantMessage) return
+
+          if (currentAssistantMessage.content === '正在思考中...') {
+            currentAssistantMessage.content = chunkText
+          } else {
+            currentAssistantMessage.content += chunkText
+          }
+        },
+        controller.signal,
+      )
+    } catch (error) {
+      // 如果这是用户主动点击“停止生成”触发的中断，就按中断逻辑处理，不按普通错误处理
+      if (isAbortError(error)) {
+        handleReplyAbort(sessionId)
+        return
+      }
+
+      handleReplyError(sessionId, error)
+    } finally {
+      // 只清空当前这一次请求对应的 controller，避免误伤别的请求状态
+      if (abortController.value === controller) {
+        abortController.value = null
+      }
+    }
+  }
+
   // selectSession：切换会话
   // 这个函数的作用是切换当前选中的会话。
   function selectSession(id: number) {
@@ -238,59 +346,49 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
       const sessionMessages = messagesBySession.value[sessionId] ?? []
-      // 手动创建一条'AI占位消息',整个过程中变化的只有content字段
-      const assistantMessage: MessageItem = {
-        id: nextMessageId(sessionId),
-        role: 'assistant',
-        content: '正在思考中...',
-        time: getNow(),
-      }
+      await streamAssistantReply(sessionId, sessionMessages)
+    } finally {
+      loading.value = false
+      persist()
+    }
+  }
 
-      messagesBySession.value[sessionId] = [...sessionMessages, assistantMessage]
-      // 把刚刚插进去的那条AI消息的位置记录下来
-      const assistantIndex = messagesBySession.value[sessionId].length - 1
-      // 流式输出的核心逻辑:
-      // 调用流式请求函数，把当前会话消息发给 DeepSeek，并且传进去一个回调函数。回调函数参数:chunkText
-      await sendChatMessageStream(sessionMessages, (chunkText) => {
-        // 拿到最新的消息数组
-        const currentList = messagesBySession.value[sessionId]
-        if (!currentList) return
-        // 根据刚才保存的 assistantIndex，把那条“正在思考中...”的 AI 消息取出来。
-        const currentAssistantMessage = currentList[assistantIndex]
-        if (!currentAssistantMessage) return
+  // stopGenerating：停止生成
+  // 这个函数的作用是主动中断当前这一次流式请求。
+  function stopGenerating() {
+    if (!loading.value) return
+    abortController.value?.abort()
+  }
 
-        if (currentAssistantMessage.content === '正在思考中...') {
-          currentAssistantMessage.content = chunkText
-        } else {
-          currentAssistantMessage.content += chunkText
-        }
-      })
-    } catch (error) {
-      // 错误类型是否是Error,是则提取错误信息,否则使用默认错误信息
-      const errorText =
-        error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误'
+  // regenerateMessage：重新回答
+  // 这个函数的作用是：删除当前这条 AI 回复，然后基于它前面的上下文重新请求一次。
+  async function regenerateMessage(messageId: number) {
+    if (loading.value) return
 
-      const currentList = messagesBySession.value[sessionId] ?? []
-      // 取出最后一条消息,即最新的AI消息
-      const lastMessage = currentList.at(-1)
-      // 只有当最后一条消息存在，并且它是 assistant，
-      // 并且它的内容是“正在思考中...”或者空字符串，才直接把这条消息改成错误提示。
-      if (
-        lastMessage &&
-        lastMessage.role === 'assistant' &&
-        (lastMessage.content === '正在思考中...' || lastMessage.content === '')
-      ) {
-        lastMessage.content = errorText
-      } else {
-        const errorMessage: MessageItem = {
-          id: nextMessageId(sessionId),
-          role: 'assistant',
-          content: errorText,
-          time: getNow(),
-        }
+    const sessionId = activeSessionId.value
+    const currentList = messagesBySession.value[sessionId] ?? []
 
-        messagesBySession.value[sessionId] = [...currentList, errorMessage]
-      }
+    // 找到要重新回答的那条 assistant 消息位置
+    const targetIndex = currentList.findIndex((item) => item.id === messageId)
+    if (targetIndex === -1) return
+
+    const targetMessage = currentList[targetIndex]
+    const previousMessage = currentList[targetIndex - 1]
+
+    // 只有当目标消息存在、它是 assistant、并且它前面一条是 user 时，才允许重新回答
+    if (!targetMessage || targetMessage.role !== 'assistant' || previousMessage?.role !== 'user') {
+      return
+    }
+
+    // 截取到目标 assistant 消息之前，把旧回答先删掉
+    const requestMessages = currentList.slice(0, targetIndex)
+    messagesBySession.value[sessionId] = requestMessages
+
+    loading.value = true
+    persist()
+
+    try {
+      await streamAssistantReply(sessionId, requestMessages)
     } finally {
       loading.value = false
       persist()
@@ -316,6 +414,8 @@ export const useChatStore = defineStore('chat', () => {
     renameSession,
     deleteSession,
     sendMessage,
+    stopGenerating,
+    regenerateMessage,
     clearCurrentSession,
   }
 })

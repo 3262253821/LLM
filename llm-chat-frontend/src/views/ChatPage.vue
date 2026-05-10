@@ -21,6 +21,8 @@ const {
   renameSession,
   deleteSession,
   sendMessage,
+  stopGenerating,
+  regenerateMessage,
   clearCurrentSession,
 } = chatStore
 </script>
@@ -37,6 +39,7 @@ const {
         @del-session="deleteSession"
       />
     </template>
+
     <template #header>
       <ChatHeader
         :title="activeTitle"
@@ -45,11 +48,21 @@ const {
         @clear-session="clearCurrentSession"
       />
     </template>
+
     <template #content>
-      <MessageList :messages="currentMessages" :loading="loading" />
+      <MessageList
+        :messages="currentMessages"
+        :loading="loading"
+        @regenerate-message="regenerateMessage"
+      />
     </template>
+
     <template #footer>
-      <MessageInput :loading="loading" @send-message="sendMessage" />
+      <MessageInput
+        :loading="loading"
+        @send-message="sendMessage"
+        @stop-generate="stopGenerating"
+      />
     </template>
   </ChatLayout>
 </template>

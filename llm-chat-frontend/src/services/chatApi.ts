@@ -48,6 +48,8 @@ export async function sendChatMessageStream(
   messages: MessageItem[],
   // 第二个参数是一个回调函数，每当流式返回一小段文本时，就把这段文本交给它处理
   onChunk: (chunkText: string) => void,
+  // 第三个参数是可选的终止信号，用来支持“停止生成”
+  signal?: AbortSignal,
 ): Promise<string> {
   // 从环境变量中获取deepseek的的基础地址、API密钥、模型名称
   // 这是 Vite 前端项目里读取环境变量的固定写法。
@@ -91,6 +93,8 @@ export async function sendChatMessageStream(
       // true 表示开启流式输出，服务器会分批返回结果，
       stream: true,
     }),
+    // 把外面传进来的 signal 交给 fetch，这样外部就可以主动中断这次请求
+    signal,
   })
   // 如果这次 HTTP 请求本身就失败了，那就先走错误处理，不进入后面的流式读取逻辑。
   // 如果响应状态不是成功状态，比如 400、401、500 之类，就进入这里。200-299 是成功状态。
