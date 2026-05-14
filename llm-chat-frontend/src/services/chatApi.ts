@@ -1,5 +1,5 @@
 // import type明确表示只导入类型，不导入实现。
-import type { MessageItem } from '@/types/chat'
+import type { ChatModel, MessageItem } from '@/types/chat'
 
 // 定义 DeepSeekMessage 接口，用于表示"发给deepseek的消息应该符合的格式"
 interface DeepSeekMessage {
@@ -23,23 +23,59 @@ interface DeepSeekStreamChunk {
   }
 }
 
+interface SendChatMessageStreamOptions {
+  // signal 用来支持“停止生成”
+  signal?: AbortSignal
+  // systemPrompt 用来支持“系统提示词”
+  systemPrompt?: string
+  // temperature 用来控制模型回答的随机性
+  temperature?: number
+  // model 用来控制当前请求真正使用哪个模型
+  model?: ChatModel
+}
+
+// 这个函数作用是：把传进来的 temperature 修正到合法范围。
+// DeepSeek 官方文档里 temperature 范围是 0 到 2，默认值是 1。
+function normalizeTemperature(value?: number) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 1
+  }
+
+  return Math.min(2, Math.max(0, value))
+}
+
+// 这个函数作用是：决定当前请求最终使用哪个模型。
+// 优先使用界面上当前选中的模型；如果没传，就退回到 .env.local 里的默认模型。
+function resolveModel(model?: ChatModel) {
+  return model || (import.meta.env.VITE_LLM_MODEL as ChatModel)
+}
+
 // 定义 toDeepSeekMessages 函数，接收参数messages,他是一个数组,数组每一项都是一个MessageItem对象
 // DeepSeekMessage[]  表示这个函数返回的结果，是一个 DeepSeekMessage 数组。
 // 该函数意思就是  “我写一个转换函数，把你项目里的消息格式，转成 DeepSeek 接口需要的消息格式。”
-function toDeepSeekMessages(messages: MessageItem[]): DeepSeekMessage[] {
-  // map方法,遍历数组每一项,返回新的数组
-  // 例如下面例子中,返回messages中的role和content属性
-  // 原来的messages可能长这样,{
-  //   id: 1,
-  //   role: 'user',
-  //   content: '你好',
-  //   time: '10:00:00'
-  // }
-  // 但是deepseek接口可能只需要role和content属性,所以需要转换一下
-  return messages.map((item) => ({
+function toDeepSeekMessages(messages: MessageItem[], systemPrompt?: string): DeepSeekMessage[] {
+  // 先把项目里的消息数组，转换成 DeepSeek 接口需要的消息格式
+  const chatMessages = messages.map((item) => ({
     role: item.role,
     content: item.content,
   }))
+
+  // trim() 是为了去掉用户输入提示词前后的空格
+  const prompt = systemPrompt?.trim()
+
+  // 如果没有配置 systemPrompt，就直接返回普通消息数组
+  if (!prompt) {
+    return chatMessages
+  }
+
+  // 如果配置了 systemPrompt，就把它插到最前面，作为第一条 system 消息
+  return [
+    {
+      role: 'system',
+      content: prompt,
+    },
+    ...chatMessages,
+  ]
 }
 
 // sendChatMessage函数意思是  “我定义一个可导出的异步函数，传入聊天消息数组，最后返回 AI 回复文本。”
@@ -48,14 +84,16 @@ export async function sendChatMessageStream(
   messages: MessageItem[],
   // 第二个参数是一个回调函数，每当流式返回一小段文本时，就把这段文本交给它处理
   onChunk: (chunkText: string) => void,
-  // 第三个参数是可选的终止信号，用来支持“停止生成”
-  signal?: AbortSignal,
+  // 第三个参数改成配置对象，后面就可以继续往里面扩展别的参数
+  options: SendChatMessageStreamOptions = {},
 ): Promise<string> {
+  const { signal, systemPrompt, temperature, model } = options
+
   // 从环境变量中获取deepseek的的基础地址、API密钥、模型名称
   // 这是 Vite 前端项目里读取环境变量的固定写法。
   const baseUrl = import.meta.env.VITE_LLM_BASE_URL
   const apiKey = import.meta.env.VITE_LLM_API_KEY
-  const model = import.meta.env.VITE_LLM_MODEL
+  const defaultModel = import.meta.env.VITE_LLM_MODEL
 
   // 下面三个if是检查环境变量是否配置完整
   // 如果是空的、没有配置的、或者读不到就抛出错误,中断后面请求流程
@@ -65,7 +103,7 @@ export async function sendChatMessageStream(
   if (!apiKey) {
     throw new Error('缺少 VITE_LLM_API_KEY 配置')
   }
-  if (!model) {
+  if (!defaultModel) {
     throw new Error('缺少 VITE_LLM_MODEL 配置')
   }
 
@@ -86,8 +124,10 @@ export async function sendChatMessageStream(
     },
     // 表示请求体，也就是你真正发给服务器的内容。
     body: JSON.stringify({
-      model,
-      messages: toDeepSeekMessages(messages),
+      model: resolveModel(model),
+      messages: toDeepSeekMessages(messages, systemPrompt),
+      temperature: normalizeTemperature(temperature),
+
       // 表示是否开启流式输出。
       // false 表示不开启流式输出，直接返回最终结果。
       // true 表示开启流式输出，服务器会分批返回结果，

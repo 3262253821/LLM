@@ -5,8 +5,10 @@ interface ImportMetaEnv {
   // readonly表示该属性是只读的，不能被修改。
   readonly VITE_LLM_BASE_URL: string
   readonly VITE_LLM_API_KEY: string
+  // 默认模型名称，页面初始化时会先用它
   readonly VITE_LLM_MODEL: string
 }
+
 // ImportMeta 是 TypeScript 里对 import.meta 这个对象的类型描述。
 interface ImportMeta {
   readonly env: ImportMetaEnv

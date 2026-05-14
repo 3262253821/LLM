@@ -2,7 +2,13 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { sendChatMessageStream } from '@/services/chatApi'
 import { loadChatState, saveChatState } from '@/utils/chatStorage'
-import type { ChatPersistedState, MessageItem, MessagesBySession, SessionItem } from '@/types/chat'
+import type {
+  ChatModel,
+  ChatPersistedState,
+  MessageItem,
+  MessagesBySession,
+  SessionItem,
+} from '@/types/chat'
 
 // 获取当前时间，格式为 HH:mm:ss（作用就是发消息和接收消息时，都记录下当前时间）
 function getNow() {
@@ -12,6 +18,19 @@ function getNow() {
     second: '2-digit',
   })
 }
+
+// 判断某个字符串是不是当前项目支持的模型名称
+function isChatModel(value: string): value is ChatModel {
+  return value === 'deepseek-v4-flash' || value === 'deepseek-v4-pro'
+}
+
+// 获取默认模型：优先读取 .env.local 里的 VITE_LLM_MODEL。
+// 如果环境变量里的值不在支持范围内，就退回到 deepseek-v4-flash。
+function getDefaultModel(): ChatModel {
+  const envModel = import.meta.env.VITE_LLM_MODEL
+  return isChatModel(envModel) ? envModel : 'deepseek-v4-flash'
+}
+
 // 这个函数的作用是当本地没有缓存时，创建一个默认的聊天状态
 function createDefaultState(): ChatPersistedState {
   const time = getNow()
@@ -39,10 +58,21 @@ function createDefaultState(): ChatPersistedState {
         },
       ],
     },
+    // systemPrompt 表示默认的系统提示词
+    systemPrompt: '',
+    // temperature 默认是 1，表示正常随机性
+    temperature: 1,
+    // model 表示默认模型，优先取 .env.local 里的默认值
+    model: getDefaultModel(),
   }
 }
+
 // 这个函数作用是：当所有会话被删光时，自动补一个空会话，避免页面没有可用状态。
-function createEmptySessionState(): ChatPersistedState {
+function createEmptySessionState(
+  systemPrompt = '',
+  temperature = 1,
+  model: ChatModel,
+): ChatPersistedState {
   const id = Date.now()
   return {
     sessions: [{ id, title: '新会话' }],
@@ -50,8 +80,15 @@ function createEmptySessionState(): ChatPersistedState {
     messagesBySession: {
       [id]: [],
     },
+    // 这里把 systemPrompt 一起带上，避免删光会话后把提示词也清掉
+    systemPrompt,
+    // 这里把 temperature 一起带上，避免删光会话后把参数恢复成默认值
+    temperature,
+    // 这里把 model 一起带上，避免删光会话后把当前模型切换丢掉
+    model,
   }
 }
+
 // 用 Pinia 定义一个名字叫 chat 的 store，并导出一个 useChatStore 函数给页面调用。
 export const useChatStore = defineStore('chat', () => {
   // state部分，都是响应式数据
@@ -61,6 +98,10 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false) // 是否正在加载中，初始为 false
   const inited = ref(false) // 是否初始化完成，初始为 false
   const abortController = ref<AbortController | null>(null) // 当前这一次流式请求对应的终止控制器
+  const systemPrompt = ref('') // 当前全局的系统提示词配置
+  const temperature = ref(1) // 当前全局的 temperature 配置
+  const model = ref<ChatModel>(getDefaultModel()) // 当前全局的模型选择配置
+
   // computed部分，计算属性
   // 当前选中的会话标题
   const activeTitle = computed(() => {
@@ -80,7 +121,14 @@ export const useChatStore = defineStore('chat', () => {
     sessions.value = state.sessions
     activeSessionId.value = state.activeSessionId
     messagesBySession.value = state.messagesBySession ?? {}
+    // 兼容旧缓存：如果旧缓存里没有 systemPrompt，就给一个空字符串
+    systemPrompt.value = state.systemPrompt ?? ''
+    // 兼容旧缓存：如果旧缓存里没有 temperature，就给默认值 1
+    temperature.value = typeof state.temperature === 'number' ? state.temperature : 1
+    // 兼容旧缓存：如果旧缓存里没有 model，或者值不合法，就退回默认模型
+    model.value = isChatModel(state.model) ? state.model : getDefaultModel()
   }
+
   // 生成当前快照，定义一个函数，用来把当前 store 数据整理成一个可持久化对象。
   // 把 store 当前数据拿出来
   function getSnapshot(): ChatPersistedState {
@@ -88,8 +136,12 @@ export const useChatStore = defineStore('chat', () => {
       sessions: sessions.value,
       activeSessionId: activeSessionId.value,
       messagesBySession: messagesBySession.value,
+      systemPrompt: systemPrompt.value,
+      temperature: temperature.value,
+      model: model.value,
     }
   }
+
   // 定义一个“持久化”函数。
   // 把 store 当前数据存到本地
   // 以后只要状态发生变化，就调用它，避免你到处手写 localStorage.setItem(...)。
@@ -97,12 +149,34 @@ export const useChatStore = defineStore('chat', () => {
     saveChatState(getSnapshot())
   }
 
+  // updateSystemPrompt：更新系统提示词
+  // 这个函数的作用是把输入框里的 systemPrompt 保存到 store 和本地缓存
+  function updateSystemPrompt(value: string) {
+    systemPrompt.value = value
+    persist()
+  }
+
+  // updateTemperature：更新 temperature 配置
+  // 这个函数的作用是把滑块传进来的 temperature 保存到 store 和本地缓存
+  function updateTemperature(value: number) {
+    temperature.value = value
+    persist()
+  }
+
+  // updateModel：更新当前选中的模型
+  // 这个函数的作用是把下拉框里选中的模型保存到 store 和本地缓存
+  function updateModel(value: ChatModel) {
+    model.value = value
+    persist()
+  }
+
   //  ensureUsableState：兜底修正状态
   // 这个函数的作用 保证状态“始终可用”，避免出现：没会话、当前会话 id 无效、某个会话没有消息数组 这类问题。
   function ensureUsableState() {
     // 如果会话列表为空，就创建一个空会话
     if (sessions.value.length === 0) {
-      applyState(createEmptySessionState())
+      applyState(createEmptySessionState(systemPrompt.value, temperature.value, model.value))
+
       persist()
       return
     }
@@ -206,7 +280,14 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 把“请求 AI 流式回复”这段逻辑单独提取出来，sendMessage 和 regenerateMessage 都复用它
-  async function streamAssistantReply(sessionId: number, sessionMessages: MessageItem[]) {
+  // 把“请求 AI 流式回复”这段逻辑单独提取出来，sendMessage 和 regenerateMessage 都复用它
+  async function streamAssistantReply(
+    sessionId: number,
+    sessionMessages: MessageItem[],
+    prompt: string,
+    temperatureValue: number,
+    currentModel: ChatModel,
+  ) {
     // 手动创建一条'AI占位消息',整个过程中变化的只有content字段
     const assistantMessage: MessageItem = {
       id: nextMessageId(sessionId),
@@ -242,7 +323,13 @@ export const useChatStore = defineStore('chat', () => {
             currentAssistantMessage.content += chunkText
           }
         },
-        controller.signal,
+        // options
+        {
+          signal: controller.signal,
+          systemPrompt: prompt,
+          temperature: temperatureValue,
+          model: currentModel,
+        },
       )
     } catch (error) {
       // 如果这是用户主动点击“停止生成”触发的中断，就按中断逻辑处理，不按普通错误处理
@@ -312,7 +399,8 @@ export const useChatStore = defineStore('chat', () => {
       persist()
       return
     }
-    applyState(createEmptySessionState())
+    applyState(createEmptySessionState(systemPrompt.value, temperature.value, model.value))
+
     persist()
   }
   // sendMessage：发送消息
@@ -346,7 +434,13 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
       const sessionMessages = messagesBySession.value[sessionId] ?? []
-      await streamAssistantReply(sessionId, sessionMessages)
+      await streamAssistantReply(
+        sessionId,
+        sessionMessages,
+        systemPrompt.value,
+        temperature.value,
+        model.value,
+      )
     } finally {
       loading.value = false
       persist()
@@ -391,7 +485,13 @@ export const useChatStore = defineStore('chat', () => {
     persist()
 
     try {
-      await streamAssistantReply(sessionId, requestMessages)
+      await streamAssistantReply(
+        sessionId,
+        requestMessages,
+        systemPrompt.value,
+        temperature.value,
+        model.value,
+      )
     } finally {
       loading.value = false
       persist()
@@ -409,6 +509,9 @@ export const useChatStore = defineStore('chat', () => {
     sessions,
     activeSessionId,
     loading,
+    systemPrompt,
+    temperature,
+    model,
     activeTitle,
     currentMessages,
     init,
@@ -420,5 +523,8 @@ export const useChatStore = defineStore('chat', () => {
     stopGenerating,
     regenerateMessage,
     clearCurrentSession,
+    updateSystemPrompt,
+    updateTemperature,
+    updateModel,
   }
 })
