@@ -357,6 +357,7 @@ export const useChatStore = defineStore('chat', () => {
   // 这个函数的作用是主动中断当前这一次流式请求。
   function stopGenerating() {
     if (!loading.value) return
+    // abort是真正执行停止命令的方法
     abortController.value?.abort()
   }
 
@@ -369,6 +370,8 @@ export const useChatStore = defineStore('chat', () => {
     const currentList = messagesBySession.value[sessionId] ?? []
 
     // 找到要重新回答的那条 assistant 消息位置
+    // 不用find而是用findIndex，因为findIndex返回的是索引，而find返回的是元素
+    // 这里需要的知识是：位置，而不是元素
     const targetIndex = currentList.findIndex((item) => item.id === messageId)
     if (targetIndex === -1) return
 

@@ -22,8 +22,14 @@ const containerRef = ref<HTMLDivElement | null>(null)
 // 判断当前这条消息是否应该显示“重新回答”按钮
 // 这里只给“最后一条 assistant 消息”显示，并且要求它前一条必须是 user 消息
 function canShowRegenerate(item: MessageItem, index: number) {
+  // previousMessage表示当前消息的前一条消息
   const previousMessage = props.messages[index - 1]
-
+  // 四个条件：
+  // 1. 当前消息是 assistant 消息
+  // 2. 当前消息不是加载中的消息
+  // 3. 当前消息是最后一条消息
+  // 4. 前一条消息是 user 消息
+  // 必须都满足才能返回 true，才会显示“重新回答”按钮
   return (
     item.role === 'assistant' &&
     !props.loading &&

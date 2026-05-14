@@ -9,9 +9,9 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   disabled: false,
 })
-
+// 响应式变量 copied 用于记录是否已复制
 const copied = ref(false)
-
+// 记录定时器id，点了复制后过段时间才能再次点击复制
 let timer: number | null = null
 
 const buttonTitle = computed(() => {
@@ -23,6 +23,8 @@ async function handleCopy() {
   if (props.disabled || !props.content) return
 
   try {
+    // navigator.clipboard是浏览器提供的 API，用于操作剪贴板
+    // 可以使用 writeText 方法将后面的 props.content 内容写入剪贴板
     await navigator.clipboard.writeText(props.content)
     copied.value = true
 
@@ -39,7 +41,7 @@ async function handleCopy() {
     window.alert('复制失败，请检查浏览器是否允许访问剪贴板')
   }
 }
-
+// 钩子函数 onBeforeUnmount 用于在组件卸载前执行定时器清除操作
 onBeforeUnmount(() => {
   if (timer !== null) {
     window.clearTimeout(timer)
