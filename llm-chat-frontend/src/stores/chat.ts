@@ -1,6 +1,8 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 import { sendChatMessageStream } from '@/services/chatApi'
+import { fetchChatState, saveRemoteChatState } from '@/services/chatStateApi'
 import { loadChatState, saveChatState } from '@/utils/chatStorage'
 import type {
   ChatModel,
@@ -97,6 +99,7 @@ export const useChatStore = defineStore('chat', () => {
   const messagesBySession = ref<MessagesBySession>({}) // 每个会话的消息列表，初始为空对象
   const loading = ref(false) // 是否正在加载中，初始为 false
   const inited = ref(false) // 是否初始化完成，初始为 false
+  const syncing = ref(false) // 是否正在和后端同步聊天状态
   const abortController = ref<AbortController | null>(null) // 当前这一次流式请求对应的终止控制器
   const systemPrompt = ref('') // 当前全局的系统提示词配置
   const temperature = ref(1) // 当前全局的 temperature 配置
@@ -146,7 +149,18 @@ export const useChatStore = defineStore('chat', () => {
   // 把 store 当前数据存到本地
   // 以后只要状态发生变化，就调用它，避免你到处手写 localStorage.setItem(...)。
   function persist() {
-    saveChatState(getSnapshot())
+    const authStore = useAuthStore()
+    const userId = authStore.user?.id
+    const snapshot = getSnapshot()
+
+    saveChatState(snapshot, userId)
+
+    if (authStore.isLoggedIn && userId) {
+      syncing.value = true
+      void saveRemoteChatState(snapshot).finally(() => {
+        syncing.value = false
+      })
+    }
   }
 
   // updateSystemPrompt：更新系统提示词
@@ -200,13 +214,40 @@ export const useChatStore = defineStore('chat', () => {
 
   // 初始化store
   // 这个函数决定了页面第一次打开时，数据是“从缓存恢复”还是“走默认示例数据”。
-  function init() {
+  async function init() {
     // 如果已经初始化完成，就直接返回
     if (inited.value) return
+    const authStore = useAuthStore()
     // 从 localStorage 中读取聊天状态
-    const savedState = loadChatState()
+    const userId = authStore.user?.id
+    const savedState = loadChatState(userId)
     // 如果有保存的状态
-    if (savedState) {
+    if (authStore.isLoggedIn) {
+      try {
+        const remoteState = await fetchChatState()
+
+        if (remoteState) {
+          applyState(remoteState)
+          ensureUsableState()
+          saveChatState(getSnapshot(), userId)
+        } else if (savedState) {
+          applyState(savedState)
+          ensureUsableState()
+          persist()
+        } else {
+          applyState(createDefaultState())
+          persist()
+        }
+      } catch {
+        if (savedState) {
+          applyState(savedState)
+          ensureUsableState()
+        } else {
+          applyState(createDefaultState())
+          persist()
+        }
+      }
+    } else if (savedState) {
       // 应用到 store
       applyState(savedState)
       // 修正状态
@@ -509,6 +550,7 @@ export const useChatStore = defineStore('chat', () => {
     sessions,
     activeSessionId,
     loading,
+    syncing,
     systemPrompt,
     temperature,
     model,

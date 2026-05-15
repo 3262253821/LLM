@@ -16,38 +16,45 @@
     </section>
   </div>
 </template>
+
 <style scoped>
 .chat-layout {
   display: flex;
   height: 100%;
-  background: #f4f7fb;
+  background: var(--app-bg);
 }
+
 .chat-layout__sider {
   width: 260px;
-  border-right: 1px solid #e5e7eb;
-  background: #fff;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-surface);
   overflow: hidden;
 }
+
 .chat-layout__main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
+
 .chat-layout__header {
   height: 60px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface);
 }
+
 .chat-layout__content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
+
 .chat-layout__footer {
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-surface);
 }
+
 @media (max-width: 900px) {
   .chat-layout__sider {
     width: 220px;

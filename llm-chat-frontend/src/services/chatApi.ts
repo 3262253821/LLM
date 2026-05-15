@@ -1,5 +1,6 @@
 // import type明确表示只导入类型，不导入实现。
 import type { ChatModel, MessageItem } from '@/types/chat'
+import { useAuthStore } from '@/stores/auth'
 
 // 定义 DeepSeekMessage 接口，用于表示"发给deepseek的消息应该符合的格式"
 interface DeepSeekMessage {
@@ -89,38 +90,36 @@ export async function sendChatMessageStream(
 ): Promise<string> {
   const { signal, systemPrompt, temperature, model } = options
 
-  // 从环境变量中获取deepseek的的基础地址、API密钥、模型名称
-  // 这是 Vite 前端项目里读取环境变量的固定写法。
-  const baseUrl = import.meta.env.VITE_LLM_BASE_URL
-  const apiKey = import.meta.env.VITE_LLM_API_KEY
+  // 从环境变量中获取后端代理地址和默认模型名称
+  // 前端现在不再直接持有 DeepSeek API Key，而是改成请求我们自己的后端代理层。
+  const baseUrl = import.meta.env.VITE_API_BASE_URL
   const defaultModel = import.meta.env.VITE_LLM_MODEL
+  const authStore = useAuthStore()
 
-  // 下面三个if是检查环境变量是否配置完整
+  // 下面两个if是检查环境变量是否配置完整
   // 如果是空的、没有配置的、或者读不到就抛出错误,中断后面请求流程
   if (!baseUrl) {
-    throw new Error('缺少 VITE_LLM_BASE_URL 配置')
-  }
-  if (!apiKey) {
-    throw new Error('缺少 VITE_LLM_API_KEY 配置')
+    throw new Error('缺少 VITE_API_BASE_URL 配置')
   }
   if (!defaultModel) {
     throw new Error('缺少 VITE_LLM_MODEL 配置')
   }
+  if (!authStore.token) {
+    throw new Error('当前未登录，请先登录后再发送消息')
+  }
 
   // fetch是浏览器提供的一个函数,用于发送 HTTP 请求
-  // 这里是 POST 请求,因为我们要发送消息给 deepseek 接口,而不是获取资源
-  // 模板字符串拼接baseUrl和路径/chat/completions,拼成完整的请求地址
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  // 这里是 POST 请求,因为我们要把消息发给自己后端的代理接口
+  // 模板字符串拼接baseUrl和路径/api/chat/stream,拼成完整的请求地址
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST',
-    // headers的作用是  “告诉服务器：我发的是 JSON 数据，并且这是我的身份凭证。”
+    // headers的作用是  “告诉服务器：我发的是 JSON 数据，并且希望拿到流式响应。”
     headers: {
       // 表示这次发过去的数据格式是 JSON。
       'Content-Type': 'application/json',
       // 告诉服务器：我希望你返回的是流式事件流，而不是普通一次性 JSON。
       Accept: 'text/event-stream',
-      // 表示在请求头里带上身份认证信息。
-      // Bearer 是常见的 token 认证格式。
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${authStore.token}`,
     },
     // 表示请求体，也就是你真正发给服务器的内容。
     body: JSON.stringify({

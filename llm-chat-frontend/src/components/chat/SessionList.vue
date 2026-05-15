@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import UserMenuCard from '@/components/chat/UserMenuCard.vue'
 import type { SessionItem } from '@/types/chat'
 
 interface Props {
@@ -16,13 +17,12 @@ const emit = defineEmits<{
   (e: 'rename-session', id: number, title: string): void
 }>()
 
-// 当前正在编辑哪个会话的id
 const editingId = ref<number | null>(null)
-// 当前正在编辑的标题内容
 const editingTitle = ref('')
+const menuOpenId = ref<number | null>(null)
+const pendingDeleteId = ref<number | null>(null)
 
 function onSelect(id: number) {
-  // 如果当前这个会话这个在编辑名字，点击时就先不要切换会话
   if (editingId.value === id) return
   emit('select-session', id)
 }
@@ -31,38 +31,69 @@ function onCreate() {
   emit('create-session')
 }
 
-function delSession(id: number) {
-  emit('del-session', id)
-}
-// 开始改名（重命名）
 function startRename(item: SessionItem) {
-  // 记录当前正在编辑的是哪个会话
   editingId.value = item.id
-  // 把当前会话原来的标题先放进输入框里，方便修改
   editingTitle.value = item.title
+  menuOpenId.value = null
 }
-// 保存改名
+
 function saveRename(id: number) {
   const title = editingTitle.value.trim() || '未命名会话'
   emit('rename-session', id, title)
-  // 退出编辑状态
   editingId.value = null
   editingTitle.value = ''
 }
-// 取消改名
+
 function cancelRename() {
   editingId.value = null
   editingTitle.value = ''
 }
-// 处理改名的键盘事件
+
 function handleRenameKeydown(event: KeyboardEvent, id: number) {
   if (event.key === 'Enter') {
     event.preventDefault()
     saveRename(id)
   }
 
-  if (event.key === 'Escape') cancelRename()
+  if (event.key === 'Escape') {
+    cancelRename()
+  }
 }
+
+function toggleMenu(id: number) {
+  menuOpenId.value = menuOpenId.value === id ? null : id
+}
+
+function askDelete(id: number) {
+  pendingDeleteId.value = id
+  menuOpenId.value = null
+}
+
+function confirmDelete() {
+  if (pendingDeleteId.value === null) return
+  emit('del-session', pendingDeleteId.value)
+  pendingDeleteId.value = null
+}
+
+function cancelDelete() {
+  pendingDeleteId.value = null
+}
+
+function handleDocumentClick() {
+  menuOpenId.value = null
+}
+
+function stopPropagation(event: MouseEvent) {
+  event.stopPropagation()
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleDocumentClick)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleDocumentClick)
+})
 </script>
 
 <template>
@@ -88,25 +119,52 @@ function handleRenameKeydown(event: KeyboardEvent, id: number) {
             @blur="saveRename(item.id)"
             @keydown="handleRenameKeydown($event, item.id)"
           />
-          <!-- input中，click.stop是为了阻止冒泡;@keydown里面$event是当前这次事件产生的事件对象 -->
-          <!-- 如果只写@keydown="handleRenameKeydown，不写后面的$event,那就只能拿到默认的event，拿不到后面的id -->
-          <!-- 这种写法是为了拿到事件event和其他参数（这里是item.id） -->
           <span v-else class="session-list__title">{{ item.title }}</span>
         </button>
 
-        <div class="session-list__actions">
-          <button
-            class="session-list__action-btn session-list__rename-btn"
-            @click.stop="editingId === item.id ? saveRename(item.id) : startRename(item)"
-          >
-            {{ editingId === item.id ? '保存' : '重命名' }}
+        <div class="session-list__actions" @click.stop="stopPropagation">
+          <button class="session-list__menu-btn" @click="toggleMenu(item.id)">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="19" cy="12" r="1.8" />
+            </svg>
           </button>
-          <button
-            class="session-list__action-btn session-list__close-btn"
-            @click.stop="delSession(item.id)"
-          >
-            x
-          </button>
+
+          <div v-if="menuOpenId === item.id" class="session-list__menu">
+            <button class="session-list__menu-item" @click="startRename(item)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M4 19.5V16L14.2 5.8A2.12 2.12 0 0 1 17.2 8.8L7 19H4.5" />
+                <path d="M12.5 7.5L16.5 11.5" />
+              </svg>
+              <span>重命名</span>
+            </button>
+            <button class="session-list__menu-item session-list__menu-item--danger" @click="askDelete(item.id)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path d="M3 6.5H21" />
+                <path d="M8.5 6.5V5A1.5 1.5 0 0 1 10 3.5H14A1.5 1.5 0 0 1 15.5 5V6.5" />
+                <path d="M6.5 6.5L7.3 18A2 2 0 0 0 9.29 19.8H14.71A2 2 0 0 0 16.7 18L17.5 6.5" />
+                <path d="M10 10V16" />
+                <path d="M14 10V16" />
+              </svg>
+              <span>删除</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="session-list__footer">
+      <UserMenuCard />
+    </div>
+
+    <div v-if="pendingDeleteId !== null" class="session-list__dialog-mask" @click="cancelDelete">
+      <div class="session-list__dialog" @click.stop>
+        <h3 class="session-list__dialog-title">删除后，该对话将不可恢复</h3>
+        <p class="session-list__dialog-desc">确认后会删除该会话及其聊天记录。</p>
+        <div class="session-list__dialog-actions">
+          <button class="session-list__dialog-cancel" @click="cancelDelete">取消</button>
+          <button class="session-list__dialog-confirm" @click="confirmDelete">删除该对话</button>
         </div>
       </div>
     </div>
@@ -118,44 +176,59 @@ function handleRenameKeydown(event: KeyboardEvent, id: number) {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
+
 .session-list__top {
   padding: 12px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--app-border);
 }
+
 .session-list__new-btn {
   width: 100%;
-  border: 1px dashed #94a3b8;
-  background: #fff;
-  color: #334155;
-  border-radius: 8px;
-  height: 36px;
+  border: 1px dashed var(--app-border-strong);
+  background: var(--app-surface);
+  color: var(--app-text-primary);
+  border-radius: 12px;
+  height: 42px;
   cursor: pointer;
 }
+
 .session-list__body {
+  flex: 1;
   padding: 10px;
   overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
+.session-list__footer {
+  padding: 12px;
+  border-top: 1px solid var(--app-border);
+}
+
 .session-list__item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  border-radius: 8px;
-  color: #334155;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  border-radius: 14px;
+  color: var(--app-text-primary);
 }
+
 .session-list__item:hover {
-  background: #f8fafc;
+  background: var(--app-surface-soft);
 }
+
 .session-list__item.is-active {
-  border-color: #22c55e;
-  color: #166534;
-  background: #f0fdf4;
+  border-color: var(--app-success);
+  color: var(--app-success);
+  background: var(--app-success-soft);
 }
+
 .session-list__item-main {
   flex: 1;
   min-width: 0;
@@ -163,43 +236,148 @@ function handleRenameKeydown(event: KeyboardEvent, id: number) {
   background: transparent;
   color: inherit;
   text-align: left;
-  padding: 10px 12px;
+  padding: 12px 14px;
   cursor: pointer;
 }
+
 .session-list__title {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .session-list__rename-input {
   width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  padding: 6px 8px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 8px;
+  padding: 7px 9px;
   font: inherit;
+  color: var(--app-text-primary);
+  background: var(--app-surface);
 }
+
 .session-list__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  position: relative;
   padding-right: 10px;
 }
-.session-list__action-btn {
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: #475569;
+
+.session-list__menu-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: currentColor;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
-.session-list__rename-btn {
-  min-width: 44px;
+
+.session-list__menu-btn:hover {
+  border-color: var(--app-border);
+  background: rgba(255, 255, 255, 0.5);
 }
-.session-list__close-btn {
-  border: 1px solid #ef4444;
-  border-radius: 6px;
+
+.session-list__menu-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.session-list__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 148px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow);
+  z-index: 20;
+}
+
+.session-list__menu-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--app-text-primary);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.session-list__menu-item:hover {
+  background: var(--app-surface-soft);
+}
+
+.session-list__menu-item svg {
+  width: 16px;
+  height: 16px;
+}
+
+.session-list__menu-item--danger {
   color: #ef4444;
+}
+
+.session-list__dialog-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 40;
+}
+
+.session-list__dialog {
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: 24px;
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow);
+}
+
+.session-list__dialog-title {
+  margin: 0;
+  font-size: 22px;
+  color: var(--app-text-primary);
+}
+
+.session-list__dialog-desc {
+  margin: 14px 0 0;
+  color: var(--app-text-secondary);
+  line-height: 1.6;
+}
+
+.session-list__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.session-list__dialog-cancel,
+.session-list__dialog-confirm {
+  border-radius: 999px;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+.session-list__dialog-cancel {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text-primary);
+}
+
+.session-list__dialog-confirm {
+  border: none;
+  background: #ef4444;
+  color: #fff;
 }
 </style>

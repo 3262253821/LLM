@@ -29,8 +29,6 @@ function stopGenerate() {
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
-    // 阻止默认的 Enter 键行为，默认情况下在textarea中按Enter键会换行
-    // 同时，触发发送消息的逻辑
     e.preventDefault()
     send()
   }
@@ -42,7 +40,7 @@ function onKeydown(e: KeyboardEvent) {
     <textarea
       v-model="text"
       class="message-input__textarea"
-      placeholder="请输入消息,Enter 发送,Shift+Enter 换行"
+      placeholder="请输入消息，Enter 发送，Shift+Enter 换行"
       @keydown="onKeydown"
       :disabled="props.loading"
     />
@@ -74,10 +72,12 @@ function onKeydown(e: KeyboardEvent) {
   min-height: 44px;
   max-height: 120px;
   resize: vertical;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--app-border-strong);
   border-radius: 10px;
   padding: 10px;
   font: inherit;
+  color: var(--app-text-primary);
+  background: var(--app-surface);
 }
 
 .message-input__send-btn,
@@ -90,16 +90,16 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .message-input__send-btn {
-  background: #22c55e;
+  background: var(--app-success);
 }
 
 .message-input__stop-btn {
-  background: #f59e0b;
+  background: var(--app-warning);
 }
 
 .message-input__send-btn:disabled,
 .message-input__stop-btn:disabled {
-  background: #94a3b8;
+  background: var(--app-text-tertiary);
   cursor: not-allowed;
 }
 </style>
