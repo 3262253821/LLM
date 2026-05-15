@@ -1,0 +1,70 @@
+{
+  "1778833696337": {
+    "sessions": [
+      {
+        "id": 1,
+        "title": "默认会话"
+      },
+      {
+        "id": 2,
+        "title": "Vue 组件通信"
+      }
+    ],
+    "activeSessionId": 1,
+    "messagesBySession": {
+      "1": [
+        {
+          "id": 1,
+          "role": "assistant",
+          "content": "你好，我是天才程序员(gpt大人)^_^。",
+          "time": "16:48:41"
+        }
+      ],
+      "2": [
+        {
+          "id": 1,
+          "role": "user",
+          "content": "我是你爹。",
+          "time": "16:48:41"
+        }
+      ]
+    },
+    "systemPrompt": "",
+    "temperature": 1,
+    "model": "deepseek-v4-flash"
+  },
+  "1778835127707": {
+    "sessions": [
+      {
+        "id": 1,
+        "title": "默认会话"
+      },
+      {
+        "id": 2,
+        "title": "Vue 组件通信"
+      }
+    ],
+    "activeSessionId": 1,
+    "messagesBySession": {
+      "1": [
+        {
+          "id": 1,
+          "role": "assistant",
+          "content": "你好，我是天才程序员(gpt大人)^_^。",
+          "time": "16:52:07"
+        }
+      ],
+      "2": [
+        {
+          "id": 1,
+          "role": "user",
+          "content": "我是你爹。",
+          "time": "16:52:07"
+        }
+      ]
+    },
+    "systemPrompt": "",
+    "temperature": 1,
+    "model": "deepseek-v4-flash"
+  }
+}
