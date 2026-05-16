@@ -45,7 +45,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootRef" class="user-menu-card">
-    <button class="user-menu-card__trigger" @click="toggleMenu">
+    <button class="user-menu-card__trigger" type="button" @click="toggleMenu">
       <img v-if="avatar" :src="avatar" alt="用户头像" class="user-menu-card__avatar" />
       <div v-else class="user-menu-card__avatar user-menu-card__avatar--placeholder">
         {{ userName.slice(0, 1).toUpperCase() }}
@@ -57,8 +57,12 @@ onBeforeUnmount(() => {
     </button>
 
     <div v-if="open" class="user-menu-card__dropdown">
-      <button class="user-menu-card__menu-item" @click="goProfile">个人中心</button>
-      <button class="user-menu-card__menu-item user-menu-card__menu-item--danger" @click="logout">
+      <button class="user-menu-card__menu-item" type="button" @click="goProfile">个人中心</button>
+      <button
+        class="user-menu-card__menu-item user-menu-card__menu-item--danger"
+        type="button"
+        @click="logout"
+      >
         退出登录
       </button>
     </div>
@@ -73,18 +77,18 @@ onBeforeUnmount(() => {
 .user-menu-card__trigger {
   width: 100%;
   border: 1px solid var(--app-border);
-  background: var(--app-surface);
-  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  border-radius: 18px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px 14px;
   cursor: pointer;
 }
 
 .user-menu-card__avatar {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   object-fit: cover;
   background: var(--app-border);
@@ -107,7 +111,7 @@ onBeforeUnmount(() => {
 }
 
 .user-menu-card__name {
-  max-width: 150px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -127,8 +131,8 @@ onBeforeUnmount(() => {
   bottom: calc(100% + 8px);
   width: 100%;
   border: 1px solid var(--app-border);
-  border-radius: 14px;
-  background: var(--app-surface);
+  border-radius: 16px;
+  background: var(--app-surface-elevated);
   box-shadow: var(--app-shadow);
   padding: 8px;
   display: flex;
@@ -138,7 +142,7 @@ onBeforeUnmount(() => {
 
 .user-menu-card__menu-item {
   border: none;
-  background: var(--app-surface);
+  background: transparent;
   text-align: left;
   border-radius: 10px;
   padding: 10px 12px;

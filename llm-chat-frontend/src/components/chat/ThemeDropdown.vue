@@ -16,11 +16,11 @@ const options: Array<{ label: string; value: ThemeMode }> = [
     value: 'system',
   },
   {
-    label: '亮色主题',
+    label: '浅色主题',
     value: 'light',
   },
   {
-    label: '暗色主题',
+    label: '深色主题',
     value: 'dark',
   },
 ]
@@ -61,6 +61,7 @@ onBeforeUnmount(() => {
       class="theme-dropdown__trigger"
       :title="currentLabel"
       :aria-label="currentLabel"
+      type="button"
       @click.stop="toggleOpen"
     >
       <svg
@@ -122,6 +123,7 @@ onBeforeUnmount(() => {
         :key="item.value"
         class="theme-dropdown__item"
         :class="{ 'is-active': item.value === mode }"
+        type="button"
         @click="selectMode(item.value)"
       >
         <span class="theme-dropdown__item-icon">
@@ -184,12 +186,12 @@ onBeforeUnmount(() => {
 }
 
 .theme-dropdown__trigger {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   border: 1px solid var(--app-border);
-  background: var(--app-surface);
+  background: var(--app-surface-elevated);
   color: var(--app-text-primary);
-  border-radius: 999px;
+  border-radius: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -197,12 +199,14 @@ onBeforeUnmount(() => {
   transition:
     border-color 0.2s ease,
     background-color 0.2s ease,
-    color 0.2s ease;
+    color 0.2s ease,
+    transform 0.2s ease;
 }
 
 .theme-dropdown__trigger:hover {
-  border-color: var(--app-success);
-  color: var(--app-success);
+  border-color: rgba(15, 118, 110, 0.2);
+  color: var(--app-primary);
+  transform: translateY(-1px);
 }
 
 .theme-dropdown__icon {
@@ -214,11 +218,11 @@ onBeforeUnmount(() => {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
-  width: 168px;
+  width: 180px;
   padding: 8px;
   border: 1px solid var(--app-border);
-  border-radius: 16px;
-  background: var(--app-surface);
+  border-radius: 18px;
+  background: var(--app-surface-elevated);
   box-shadow: var(--app-shadow);
   z-index: 30;
 }
@@ -242,8 +246,8 @@ onBeforeUnmount(() => {
 }
 
 .theme-dropdown__item.is-active {
-  background: var(--app-success-soft);
-  color: var(--app-success);
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--app-primary);
 }
 
 .theme-dropdown__item-icon {

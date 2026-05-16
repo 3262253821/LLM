@@ -1,9 +1,10 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { sendChatMessageStream } from '@/services/chatApi'
 import { fetchChatState, saveRemoteChatState } from '@/services/chatStateApi'
 import { loadChatState, saveChatState } from '@/utils/chatStorage'
+import { debounce } from '@/utils/performance'
 import type {
   ChatModel,
   ChatPersistedState,
@@ -12,7 +13,12 @@ import type {
   SessionItem,
 } from '@/types/chat'
 
-// 获取当前时间，格式为 HH:mm:ss（作用就是发消息和接收消息时，都记录下当前时间）
+const DEFAULT_SESSION_TITLE = '新对话'
+const UNTITLED_SESSION_TITLE = '未命名会话'
+const ASSISTANT_THINKING_TEXT = '正在思考中...'
+const ASSISTANT_STOPPED_TEXT = '已停止生成'
+const GUEST_SCOPE_KEY = '__guest__'
+
 function getNow() {
   return new Date().toLocaleTimeString([], {
     hour: '2-digit',
@@ -21,119 +27,72 @@ function getNow() {
   })
 }
 
-// 判断某个字符串是不是当前项目支持的模型名称
 function isChatModel(value: string): value is ChatModel {
   return value === 'deepseek-v4-flash' || value === 'deepseek-v4-pro'
 }
 
-// 获取默认模型：优先读取 .env.local 里的 VITE_LLM_MODEL。
-// 如果环境变量里的值不在支持范围内，就退回到 deepseek-v4-flash。
 function getDefaultModel(): ChatModel {
   const envModel = import.meta.env.VITE_LLM_MODEL
   return isChatModel(envModel) ? envModel : 'deepseek-v4-flash'
 }
 
-// 这个函数的作用是当本地没有缓存时，创建一个默认的聊天状态
-function createDefaultState(): ChatPersistedState {
-  const time = getNow()
-  return {
-    sessions: [
-      { id: 1, title: '默认会话' },
-      { id: 2, title: 'Vue 组件通信' },
-    ],
-    activeSessionId: 1,
-    messagesBySession: {
-      1: [
-        {
-          id: 1,
-          role: 'assistant',
-          content: '你好，我是天才程序员(gpt大人)^_^。',
-          time,
-        },
-      ],
-      2: [
-        {
-          id: 1,
-          role: 'user',
-          content: '我是你爹。',
-          time,
-        },
-      ],
-    },
-    // systemPrompt 表示默认的系统提示词
-    systemPrompt: '',
-    // temperature 默认是 1，表示正常随机性
-    temperature: 1,
-    // model 表示默认模型，优先取 .env.local 里的默认值
-    model: getDefaultModel(),
-  }
-}
-
-// 这个函数作用是：当所有会话被删光时，自动补一个空会话，避免页面没有可用状态。
 function createEmptySessionState(
   systemPrompt = '',
   temperature = 1,
-  model: ChatModel,
+  model: ChatModel = getDefaultModel(),
 ): ChatPersistedState {
   const id = Date.now()
+
   return {
-    sessions: [{ id, title: '新会话' }],
+    sessions: [{ id, title: DEFAULT_SESSION_TITLE }],
     activeSessionId: id,
     messagesBySession: {
       [id]: [],
     },
-    // 这里把 systemPrompt 一起带上，避免删光会话后把提示词也清掉
     systemPrompt,
-    // 这里把 temperature 一起带上，避免删光会话后把参数恢复成默认值
     temperature,
-    // 这里把 model 一起带上，避免删光会话后把当前模型切换丢掉
     model,
   }
 }
 
-// 用 Pinia 定义一个名字叫 chat 的 store，并导出一个 useChatStore 函数给页面调用。
 export const useChatStore = defineStore('chat', () => {
-  // state部分，都是响应式数据
-  const sessions = ref<SessionItem[]>([]) // 会话列表，初始为空数组
-  const activeSessionId = ref(0) // 当前选中的会话 ID，初始为 0
-  const messagesBySession = ref<MessagesBySession>({}) // 每个会话的消息列表，初始为空对象
-  const loading = ref(false) // 是否正在加载中，初始为 false
-  const inited = ref(false) // 是否初始化完成，初始为 false
-  const syncing = ref(false) // 是否正在和后端同步聊天状态
-  const abortController = ref<AbortController | null>(null) // 当前这一次流式请求对应的终止控制器
-  const systemPrompt = ref('') // 当前全局的系统提示词配置
-  const temperature = ref(1) // 当前全局的 temperature 配置
-  const model = ref<ChatModel>(getDefaultModel()) // 当前全局的模型选择配置
+  const authStore = useAuthStore()
+  const sessions = ref<SessionItem[]>([])
+  const activeSessionId = ref(0)
+  const messagesBySession = ref<MessagesBySession>({})
+  const loading = ref(false)
+  const inited = ref(false)
+  const syncing = ref(false)
+  const abortController = ref<AbortController | null>(null)
+  const systemPrompt = ref('')
+  const temperature = ref(1)
+  const model = ref<ChatModel>(getDefaultModel())
+  const currentScopeKey = ref('')
+  let syncRequestId = 0
+  let beforeUnloadBound = false
 
-  // computed部分，计算属性
-  // 当前选中的会话标题
   const activeTitle = computed(() => {
-    // find函数，从数组中找到符合条件的第一个元素，找到就返回该元素，否则返回 undefined
     const target = sessions.value.find((item) => item.id === activeSessionId.value)
-    // ?.可选链操作符，如果 target存在返回target.title，否则返回undefined
-    // ?? 空合并操作符，如果 target 为 undefined，就返回 '未命名会话'
-    return target?.title ?? '未命名会话'
+    return target?.title ?? UNTITLED_SESSION_TITLE
   })
-  // 当前选中的会话消息列表
+
   const currentMessages = computed(() => {
     return messagesBySession.value[activeSessionId.value] ?? []
   })
-  // 把状态整体灌进 store，定义一个内部工具函数，专门负责“整包替换当前 store 状态”。
-  // 把读出来的数据放进 store
+
+  function getScopeKey() {
+    return authStore.isLoggedIn && authStore.user?.id ? authStore.user.id : GUEST_SCOPE_KEY
+  }
+
   function applyState(state: ChatPersistedState) {
     sessions.value = state.sessions
     activeSessionId.value = state.activeSessionId
     messagesBySession.value = state.messagesBySession ?? {}
-    // 兼容旧缓存：如果旧缓存里没有 systemPrompt，就给一个空字符串
     systemPrompt.value = state.systemPrompt ?? ''
-    // 兼容旧缓存：如果旧缓存里没有 temperature，就给默认值 1
     temperature.value = typeof state.temperature === 'number' ? state.temperature : 1
-    // 兼容旧缓存：如果旧缓存里没有 model，或者值不合法，就退回默认模型
     model.value = isChatModel(state.model) ? state.model : getDefaultModel()
   }
 
-  // 生成当前快照，定义一个函数，用来把当前 store 数据整理成一个可持久化对象。
-  // 把 store 当前数据拿出来
   function getSnapshot(): ChatPersistedState {
     return {
       sessions: sessions.value,
@@ -145,183 +104,216 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 定义一个“持久化”函数。
-  // 把 store 当前数据存到本地
-  // 以后只要状态发生变化，就调用它，避免你到处手写 localStorage.setItem(...)。
-  function persist() {
-    const authStore = useAuthStore()
+  function saveLocalSnapshot(snapshot = getSnapshot()) {
+    saveChatState(snapshot, authStore.user?.id)
+  }
+
+  async function syncRemoteSnapshot(snapshot = getSnapshot()) {
     const userId = authStore.user?.id
-    const snapshot = getSnapshot()
 
-    saveChatState(snapshot, userId)
+    if (!authStore.isLoggedIn || !userId) return
 
-    if (authStore.isLoggedIn && userId) {
-      syncing.value = true
-      void saveRemoteChatState(snapshot).finally(() => {
+    const requestId = ++syncRequestId
+    syncing.value = true
+
+    try {
+      await saveRemoteChatState(snapshot)
+    } finally {
+      if (requestId === syncRequestId) {
         syncing.value = false
-      })
+      }
     }
   }
 
-  // updateSystemPrompt：更新系统提示词
-  // 这个函数的作用是把输入框里的 systemPrompt 保存到 store 和本地缓存
+  const scheduleLocalPersist = debounce(() => {
+    saveLocalSnapshot()
+  }, 120)
+
+  const scheduleRemotePersist = debounce(() => {
+    void syncRemoteSnapshot()
+  }, 680)
+
+  function cancelPendingPersistence() {
+    scheduleLocalPersist.cancel()
+    scheduleRemotePersist.cancel()
+    syncRequestId += 1
+    syncing.value = false
+  }
+
+  function persistLocal(options: { immediate?: boolean } = {}) {
+    if (options.immediate) {
+      scheduleLocalPersist.cancel()
+      saveLocalSnapshot()
+      return
+    }
+
+    scheduleLocalPersist()
+  }
+
+  function persist(options: { immediate?: boolean } = {}) {
+    persistLocal(options)
+
+    if (!authStore.isLoggedIn || !authStore.user?.id) return
+
+    if (options.immediate) {
+      scheduleRemotePersist.cancel()
+      void syncRemoteSnapshot()
+      return
+    }
+
+    scheduleRemotePersist()
+  }
+
   function updateSystemPrompt(value: string) {
     systemPrompt.value = value
     persist()
   }
 
-  // updateTemperature：更新 temperature 配置
-  // 这个函数的作用是把滑块传进来的 temperature 保存到 store 和本地缓存
   function updateTemperature(value: number) {
     temperature.value = value
     persist()
   }
 
-  // updateModel：更新当前选中的模型
-  // 这个函数的作用是把下拉框里选中的模型保存到 store 和本地缓存
   function updateModel(value: ChatModel) {
     model.value = value
     persist()
   }
 
-  //  ensureUsableState：兜底修正状态
-  // 这个函数的作用 保证状态“始终可用”，避免出现：没会话、当前会话 id 无效、某个会话没有消息数组 这类问题。
+  function resetRuntimeState() {
+    abortController.value?.abort()
+    abortController.value = null
+    loading.value = false
+  }
+
   function ensureUsableState() {
-    // 如果会话列表为空，就创建一个空会话
     if (sessions.value.length === 0) {
       applyState(createEmptySessionState(systemPrompt.value, temperature.value, model.value))
-
-      persist()
+      persist({ immediate: true })
       return
     }
-    // some函数意思是，只要数组里有一个元素符合条件，就返回 true，一个都没有返回 false
+
     const hasActiveSession = sessions.value.some((item) => item.id === activeSessionId.value)
-    // 如果当前会话 id 无效，就切换到第一个会话
+
     if (!hasActiveSession) {
       const firstSessionId = sessions.value[0]?.id
-      // 空数组时，sessions.value[0]不存在，拿不到id
+
       if (firstSessionId !== undefined) {
         activeSessionId.value = firstSessionId
       }
     }
-    // for of 是遍历数组的每个元素，返回的是值
-    // for in 是遍历数组的每个索引，返回的是索引
+
     for (const session of sessions.value) {
-      // ??=，如果左边为null或undefined，就把右边赋值给左边
       messagesBySession.value[session.id] ??= []
     }
   }
 
-  // 初始化store
-  // 这个函数决定了页面第一次打开时，数据是“从缓存恢复”还是“走默认示例数据”。
-  async function init() {
-    // 如果已经初始化完成，就直接返回
-    if (inited.value) return
-    const authStore = useAuthStore()
-    // 从 localStorage 中读取聊天状态
-    const userId = authStore.user?.id
-    const savedState = loadChatState(userId)
-    // 如果有保存的状态
-    if (authStore.isLoggedIn) {
+  async function init(force = false) {
+    const scopeKey = getScopeKey()
+
+    if (inited.value && !force && currentScopeKey.value === scopeKey) {
+      return
+    }
+
+    if (!beforeUnloadBound) {
+      window.addEventListener('beforeunload', () => {
+        scheduleLocalPersist.flush()
+      })
+      beforeUnloadBound = true
+    }
+
+    cancelPendingPersistence()
+    resetRuntimeState()
+
+    const savedState = loadChatState(authStore.user?.id)
+
+    if (authStore.isLoggedIn && authStore.user?.id) {
       try {
         const remoteState = await fetchChatState()
 
         if (remoteState) {
           applyState(remoteState)
           ensureUsableState()
-          saveChatState(getSnapshot(), userId)
+          persistLocal({ immediate: true })
         } else if (savedState) {
           applyState(savedState)
           ensureUsableState()
-          persist()
+          persist({ immediate: true })
         } else {
-          applyState(createDefaultState())
-          persist()
+          applyState(createEmptySessionState())
+          persist({ immediate: true })
         }
       } catch {
         if (savedState) {
           applyState(savedState)
           ensureUsableState()
+          persistLocal({ immediate: true })
         } else {
-          applyState(createDefaultState())
-          persist()
+          applyState(createEmptySessionState())
+          persist({ immediate: true })
         }
       }
     } else if (savedState) {
-      // 应用到 store
       applyState(savedState)
-      // 修正状态
       ensureUsableState()
+      persistLocal({ immediate: true })
     } else {
-      applyState(createDefaultState())
-      persist()
+      applyState(createEmptySessionState())
+      persistLocal({ immediate: true })
     }
-    // 标记为已初始化
+
+    currentScopeKey.value = scopeKey
     inited.value = true
   }
-  // nextMessageId：生成下一条消息 id
-  // 这个函数的作用是保证每个会话内部的消息 id 是递增的。
+
   function nextMessageId(sessionId: number) {
     const list = messagesBySession.value[sessionId] ?? []
-    // 取这个消息数组的最后一条消息。
-    // .at(-1) 就是“拿最后一个元素”。
     const last = list.at(-1)
     return last ? last.id + 1 : 1
   }
 
-  // 判断当前错误是不是“主动中断请求”产生的 AbortError
   function isAbortError(error: unknown) {
     return error instanceof DOMException && error.name === 'AbortError'
   }
 
-  // 统一处理“AI 回复失败”时的消息显示
   function handleReplyError(sessionId: number, error: unknown) {
-    // 错误类型是否是Error,是则提取错误信息,否则使用默认错误信息
     const errorText =
       error instanceof Error ? `请求失败：${error.message}` : '请求失败：发生未知错误'
 
     const currentList = messagesBySession.value[sessionId] ?? []
-    // 取出最后一条消息,即最新的AI消息
     const lastMessage = currentList.at(-1)
-    // 只有当最后一条消息存在，并且它是 assistant，
-    // 并且它的内容是“正在思考中...”或者空字符串，才直接把这条消息改成错误提示。
+
     if (
       lastMessage &&
       lastMessage.role === 'assistant' &&
-      (lastMessage.content === '正在思考中...' || lastMessage.content === '')
+      (lastMessage.content === ASSISTANT_THINKING_TEXT || lastMessage.content === '')
     ) {
       lastMessage.content = errorText
-    } else {
-      const errorMessage: MessageItem = {
-        id: nextMessageId(sessionId),
-        role: 'assistant',
-        content: errorText,
-        time: getNow(),
-      }
-
-      messagesBySession.value[sessionId] = [...currentList, errorMessage]
+      return
     }
+
+    const errorMessage: MessageItem = {
+      id: nextMessageId(sessionId),
+      role: 'assistant',
+      content: errorText,
+      time: getNow(),
+    }
+
+    messagesBySession.value[sessionId] = [...currentList, errorMessage]
   }
 
-  // 统一处理“停止生成”时的消息显示
   function handleReplyAbort(sessionId: number) {
     const currentList = messagesBySession.value[sessionId] ?? []
-    // 取出最后一条消息,即最新的AI消息
     const lastMessage = currentList.at(-1)
 
-    // 如果一条真实内容都还没返回，就把“正在思考中...”改成“已停止生成”
     if (
       lastMessage &&
       lastMessage.role === 'assistant' &&
-      lastMessage.content === '正在思考中...'
+      lastMessage.content === ASSISTANT_THINKING_TEXT
     ) {
-      lastMessage.content = '已停止生成'
+      lastMessage.content = ASSISTANT_STOPPED_TEXT
     }
-    // 如果已经有部分流式内容了，这里什么都不做，保留已生成的内容
   }
 
-  // 把“请求 AI 流式回复”这段逻辑单独提取出来，sendMessage 和 regenerateMessage 都复用它
-  // 把“请求 AI 流式回复”这段逻辑单独提取出来，sendMessage 和 regenerateMessage 都复用它
   async function streamAssistantReply(
     sessionId: number,
     sessionMessages: MessageItem[],
@@ -329,42 +321,35 @@ export const useChatStore = defineStore('chat', () => {
     temperatureValue: number,
     currentModel: ChatModel,
   ) {
-    // 手动创建一条'AI占位消息',整个过程中变化的只有content字段
     const assistantMessage: MessageItem = {
       id: nextMessageId(sessionId),
       role: 'assistant',
-      content: '正在思考中...',
+      content: ASSISTANT_THINKING_TEXT,
       time: getNow(),
     }
 
     messagesBySession.value[sessionId] = [...sessionMessages, assistantMessage]
-    // 把刚刚插进去的那条AI消息的位置记录下来
     const assistantIndex = messagesBySession.value[sessionId].length - 1
 
-    // 为这一次请求单独创建一个 AbortController
     const controller = new AbortController()
     abortController.value = controller
 
     try {
-      // 流式输出的核心逻辑:
-      // 调用流式请求函数，把当前会话消息发给 DeepSeek，并且传进去一个回调函数。回调函数参数:chunkText
       await sendChatMessageStream(
         sessionMessages,
         (chunkText) => {
-          // 拿到最新的消息数组
           const currentList = messagesBySession.value[sessionId]
           if (!currentList) return
-          // 根据刚才保存的 assistantIndex，把那条“正在思考中...”的 AI 消息取出来。
+
           const currentAssistantMessage = currentList[assistantIndex]
           if (!currentAssistantMessage) return
 
-          if (currentAssistantMessage.content === '正在思考中...') {
+          if (currentAssistantMessage.content === ASSISTANT_THINKING_TEXT) {
             currentAssistantMessage.content = chunkText
           } else {
             currentAssistantMessage.content += chunkText
           }
         },
-        // options
         {
           signal: controller.signal,
           systemPrompt: prompt,
@@ -373,7 +358,6 @@ export const useChatStore = defineStore('chat', () => {
         },
       )
     } catch (error) {
-      // 如果这是用户主动点击“停止生成”触发的中断，就按中断逻辑处理，不按普通错误处理
       if (isAbortError(error)) {
         handleReplyAbort(sessionId)
         return
@@ -381,78 +365,71 @@ export const useChatStore = defineStore('chat', () => {
 
       handleReplyError(sessionId, error)
     } finally {
-      // 只清空当前这一次请求对应的 controller，避免误伤别的请求状态
       if (abortController.value === controller) {
         abortController.value = null
       }
     }
   }
 
-  // selectSession：切换会话
-  // 这个函数的作用是切换当前选中的会话。
   function selectSession(id: number) {
     activeSessionId.value = id
     persist()
   }
-  // createSession：创建会话
-  // 这个函数的作用是创建一个新的会话。
+
   function createSession() {
     const id = Date.now()
-    // unshift是把新会话插入数组的最前面
+
     sessions.value.unshift({
       id,
-      title: '新会话',
+      title: DEFAULT_SESSION_TITLE,
     })
+
     messagesBySession.value[id] = []
     activeSessionId.value = id
-    persist()
+    persist({ immediate: true })
   }
-  // renameSession：重命名会话
-  // 这个函数的作用是重命名一个会话。
+
   function renameSession(id: number, title: string) {
     const target = sessions.value.find((item) => item.id === id)
     if (!target) return
-    target.title = title.trim() || '未命名会话'
+
+    target.title = title.trim() || UNTITLED_SESSION_TITLE
     persist()
   }
-  // deleteSession：删除会话
-  // 这个函数的作用是删除一个会话。
+
   function deleteSession(id: number) {
-    // 判断删除的会话是否是当前选中的会话
     const isActive = activeSessionId.value === id
-    // filter函数是返回一个新的数组，只包含符合条件的元素
+
     sessions.value = sessions.value.filter((item) => item.id !== id)
-    // 同时删掉对应的消息数组
     delete messagesBySession.value[id]
-    // 如果删的不是当前选中的会话，也要继续处理。因为虽然没删除当前会话，但还是删掉了两块状态
-    // 所以说状态发生了变化，就要修正状态并且更新状态到本地
+
     if (!isActive) {
       ensureUsableState()
-      persist()
+      persist({ immediate: true })
       return
     }
+
     if (sessions.value.length > 0) {
       const firstSessionId = sessions.value[0]?.id
+
       if (firstSessionId !== undefined) {
         activeSessionId.value = firstSessionId
       }
+
       ensureUsableState()
-      persist()
+      persist({ immediate: true })
       return
     }
-    applyState(createEmptySessionState(systemPrompt.value, temperature.value, model.value))
 
-    persist()
+    applyState(createEmptySessionState(systemPrompt.value, temperature.value, model.value))
+    persist({ immediate: true })
   }
-  // sendMessage：发送消息
-  // 这个函数的作用是发送一条消息。
-  // 异步函数，因为要等待服务器返回结果。
+
   async function sendMessage(text: string) {
     const value = text.trim()
     if (!value || loading.value) return
 
     const sessionId = activeSessionId.value
-
     const userMessage: MessageItem = {
       id: nextMessageId(sessionId),
       role: 'user',
@@ -466,15 +443,17 @@ export const useChatStore = defineStore('chat', () => {
     ]
 
     const currentSession = sessions.value.find((item) => item.id === sessionId)
-    if (currentSession && currentSession.title === '新会话') {
-      currentSession.title = value.slice(0, 12) || '新会话'
+
+    if (currentSession && currentSession.title === DEFAULT_SESSION_TITLE) {
+      currentSession.title = value.slice(0, 12) || DEFAULT_SESSION_TITLE
     }
 
     loading.value = true
-    persist()
+    persist({ immediate: true })
 
     try {
       const sessionMessages = messagesBySession.value[sessionId] ?? []
+
       await streamAssistantReply(
         sessionId,
         sessionMessages,
@@ -484,46 +463,36 @@ export const useChatStore = defineStore('chat', () => {
       )
     } finally {
       loading.value = false
-      persist()
+      persist({ immediate: true })
     }
   }
 
-  // stopGenerating：停止生成
-  // 这个函数的作用是主动中断当前这一次流式请求。
   function stopGenerating() {
     if (!loading.value) return
-    // abort是真正执行停止命令的方法
     abortController.value?.abort()
   }
 
-  // regenerateMessage：重新回答
-  // 这个函数的作用是：删除当前这条 AI 回复，然后基于它前面的上下文重新请求一次。
   async function regenerateMessage(messageId: number) {
     if (loading.value) return
 
     const sessionId = activeSessionId.value
     const currentList = messagesBySession.value[sessionId] ?? []
-
-    // 找到要重新回答的那条 assistant 消息位置
-    // 不用find而是用findIndex，因为findIndex返回的是索引，而find返回的是元素
-    // 这里需要的知识是：位置，而不是元素
     const targetIndex = currentList.findIndex((item) => item.id === messageId)
+
     if (targetIndex === -1) return
 
     const targetMessage = currentList[targetIndex]
     const previousMessage = currentList[targetIndex - 1]
 
-    // 只有当目标消息存在、它是 assistant、并且它前面一条是 user 时，才允许重新回答
     if (!targetMessage || targetMessage.role !== 'assistant' || previousMessage?.role !== 'user') {
       return
     }
 
-    // 截取到目标 assistant 消息之前，把旧回答先删掉
     const requestMessages = currentList.slice(0, targetIndex)
     messagesBySession.value[sessionId] = requestMessages
 
     loading.value = true
-    persist()
+    persist({ immediate: true })
 
     try {
       await streamAssistantReply(
@@ -535,17 +504,23 @@ export const useChatStore = defineStore('chat', () => {
       )
     } finally {
       loading.value = false
-      persist()
+      persist({ immediate: true })
     }
   }
 
-  // clearCurrentSession：清空当前会话
-  // 这个函数的作用是清空当前选中的会话的所有消息。
   function clearCurrentSession() {
     messagesBySession.value[activeSessionId.value] = []
-    persist()
+    persist({ immediate: true })
   }
-  // return：暴露给页面使用
+
+  watch(
+    () => getScopeKey(),
+    (nextScopeKey, previousScopeKey) => {
+      if (!inited.value || nextScopeKey === previousScopeKey) return
+      void init(true)
+    },
+  )
+
   return {
     sessions,
     activeSessionId,

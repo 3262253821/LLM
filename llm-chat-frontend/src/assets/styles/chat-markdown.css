@@ -1,6 +1,6 @@
 .markdown-body {
-  color: #0f172a;
-  line-height: 1.7;
+  color: var(--app-text-primary);
+  line-height: 1.75;
   word-break: break-word;
 }
 
@@ -31,7 +31,7 @@
 }
 
 .markdown-body a {
-  color: #2563eb;
+  color: var(--app-info);
   text-decoration: none;
 }
 
@@ -40,28 +40,32 @@
 }
 
 .markdown-body blockquote {
-  border-left: 4px solid #cbd5e1;
+  border-left: 4px solid rgba(15, 118, 110, 0.22);
   padding-left: 12px;
-  color: #475569;
+  color: var(--app-text-secondary);
 }
 
 .markdown-body .markdown-pre {
   overflow-x: auto;
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--app-border);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+:root[data-theme='dark'] .markdown-body .markdown-pre {
+  background: rgba(2, 6, 23, 0.46);
 }
 
 .markdown-body :not(pre) > code {
   padding: 2px 6px;
-  border-radius: 6px;
-  background: #e2e8f0;
+  border-radius: 8px;
+  background: rgba(15, 118, 110, 0.12);
   font-size: 13px;
 }
 
 .markdown-body pre code {
-  font-family: 'Consolas', 'Fira Code', monospace;
+  font-family: 'Consolas', 'Cascadia Code', 'Fira Code', monospace;
   font-size: 13px;
 }
 
@@ -72,7 +76,7 @@
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--app-border);
   padding: 8px 10px;
   text-align: left;
 }

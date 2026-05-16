@@ -9,9 +9,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   disabled: false,
 })
-// 响应式变量 copied 用于记录是否已复制
+
 const copied = ref(false)
-// 记录定时器id，点了复制后过段时间才能再次点击复制
 let timer: number | null = null
 
 const buttonTitle = computed(() => {
@@ -23,8 +22,6 @@ async function handleCopy() {
   if (props.disabled || !props.content) return
 
   try {
-    // navigator.clipboard是浏览器提供的 API，用于操作剪贴板
-    // 可以使用 writeText 方法将后面的 props.content 内容写入剪贴板
     await navigator.clipboard.writeText(props.content)
     copied.value = true
 
@@ -38,10 +35,10 @@ async function handleCopy() {
     }, 1500)
   } catch (error) {
     console.error('复制失败', error)
-    window.alert('复制失败，请检查浏览器是否允许访问剪贴板')
+    window.alert('复制失败，请检查浏览器是否允许访问剪贴板。')
   }
 }
-// 钩子函数 onBeforeUnmount 用于在组件卸载前执行定时器清除操作
+
 onBeforeUnmount(() => {
   if (timer !== null) {
     window.clearTimeout(timer)
@@ -89,18 +86,18 @@ onBeforeUnmount(() => {
   justify-content: center;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--app-text-tertiary);
   cursor: pointer;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: 8px;
   transition:
     color 0.2s ease,
     background-color 0.2s ease;
 }
 
 .copy-button:hover {
-  color: #475569;
-  background: #f1f5f9;
+  color: var(--app-text-primary);
+  background: rgba(15, 118, 110, 0.08);
 }
 
 .copy-button:disabled {

@@ -59,18 +59,18 @@ function handleClick() {
   justify-content: center;
   border: none;
   background: transparent;
-  color: #94a3b8;
+  color: var(--app-text-tertiary);
   cursor: pointer;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: 8px;
   transition:
     color 0.2s ease,
     background-color 0.2s ease;
 }
 
 .regenerate-button:hover {
-  color: #475569;
-  background: #f1f5f9;
+  color: var(--app-text-primary);
+  background: rgba(15, 118, 110, 0.08);
 }
 
 .regenerate-button:disabled {
